@@ -5,7 +5,7 @@ async function main() {
   const user = await prisma.user.create({
     data: {
       email: 'testuser@example.com',
-      passwordHash: 'placeholder_hash', // we'll add real hashing in the Auth phase
+      passwordHash: 'placeholder_hash',
       fullName: 'Test User',
       mobNumber: '9999999999',
       balance: {
@@ -17,7 +17,18 @@ async function main() {
     },
   });
 
+  const reliance = await prisma.instrument.create({
+    data: {
+      symbol: 'RELIANCE',
+      name: 'Reliance Industries Ltd',
+      type: 'EQUITY',
+      exchange: 'NSE',
+      lotSize: 1,
+    },
+  });
+
   console.log('Seeded user:', user);
+  console.log('Seeded instrument:', reliance);
 }
 
 main()
