@@ -1,0 +1,161 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+// ==========================================
+// AUTH & USER
+// ==========================================
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  fullName     String
+  mobNumber    String
+  createdAt    DateTime @default(now())
+
+  account    Account?
+  banks      Bank[]
+  orders     Order[]
+  trades     Trade[]
+  positions  Position[]
+  holdings   Holding[]
+  watchlists Watchlist[]
+  balance    Balance?
+}
+
+model Balance {
+  id               String  @id @default(uuid())
+  availableBalance Decimal @default(0)
+  usedMargin       Decimal @default(0)
+
+  user   User   @relation(fields: [userId], references: [id])
+  userId String @unique
+}
+
+model Account {
+  id               String   @id @default(uuid())
+  dob              DateTime
+  pan_no           String   @unique
+  gender           String?
+  maritalStatus    String?
+  occupation       String?
+  incomeRange      String?
+  uniqueClientCode String   @unique
+
+  user   User   @relation(fields: [userId], references: [id])
+  userId String @unique
+}
+
+// ==========================================
+// MARKET DATA (reference table)
+// ==========================================
+
+model Instrument {
+  id       String @id @default(uuid())
+  symbol   String @unique
+  name     String
+  type     String // "EQUITY" | "FUTURE" | "OPTION" | "MF"
+  exchange String // "NSE" | "BSE"
+  lotSize  Int    @default(1)
+
+  orders    Order[]
+  trades    Trade[]
+  positions Position[]
+  holdings  Holding[]
+}
+
+// ==========================================
+// TRADING CORE
+// ==========================================
+
+model Order {
+  id           String   @id @default(uuid())
+  type         String   // "buy" | "sell"
+  orderType    String   // "market" | "limit" | "GTT" | "AMO"
+  qty          Int
+  orderPrice   Decimal
+  status       String   @default("pending") // pending | executed | cancelled
+  validity     String   // "DAY" | "IOC"
+  createdAt    DateTime @default(now())
+
+  user         User       @relation(fields: [userId], references: [id])
+  userId       String
+  instrument   Instrument @relation(fields: [instrumentId], references: [id])
+  instrumentId String
+
+  trades Trade[]
+}
+
+model Trade {
+  id            String   @id @default(uuid())
+  pricePerShare Decimal
+  sharesQty     Int
+  totalPrice    Decimal
+  brokerage     Decimal  @default(0)
+  executedAt    DateTime @default(now())
+
+  user         User       @relation(fields: [userId], references: [id])
+  userId       String
+  instrument   Instrument @relation(fields: [instrumentId], references: [id])
+  instrumentId String
+  order        Order      @relation(fields: [orderId], references: [id])
+  orderId      String
+}
+
+model Position {
+  id            String  @id @default(uuid())
+  productType   String  // "MIS" | "NRML"
+  netQty        Int
+  avgPrice      Decimal
+  realizedPnl   Decimal @default(0)
+  unrealizedPnl Decimal @default(0)
+
+  user         User       @relation(fields: [userId], references: [id])
+  userId       String
+  instrument   Instrument @relation(fields: [instrumentId], references: [id])
+  instrumentId String
+}
+
+model Holding {
+  id            String  @id @default(uuid())
+  qty           Int
+  investedValue Decimal
+  currentValue  Decimal @default(0)
+
+  user         User       @relation(fields: [userId], references: [id])
+  userId       String
+  instrument   Instrument @relation(fields: [instrumentId], references: [id])
+  instrumentId String
+}
+
+// ==========================================
+// BANKS
+// ==========================================
+
+model Bank {
+  id            String @id @default(uuid())
+  accountNumber String
+  ifscCode      String
+  bankBranch    String
+  status        String @default("pending") // pending | verified
+
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
+}
+
+// ==========================================
+// WATCHLIST
+// ==========================================
+
+model Watchlist {
+  id   String @id @default(uuid())
+  name String
+
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
+}
