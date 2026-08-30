@@ -1,5 +1,8 @@
 import express, { Request, Response } from 'express';
 import prisma from './lib/prisma';
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
+import { requireAuth, AuthRequest } from './middleware/auth';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -10,23 +13,22 @@ app.get('/api/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', message: 'Trading platform server is running' });
 });
 
-app.get('/api/users/:id/balance', async (req: Request, res: Response) => {
-  const { id } = req.params;
+app.get('/api/me/balance', requireAuth, async (req: AuthRequest, res: Response) => {
+  const userId = req.userId as string;
 
-  const balance = await prisma.balance.findUnique({
-    where: { userId: id },
-  });
+  const balance = await prisma.balance.findUnique({ where: { userId } });
 
   if (!balance) {
-    return res.status(404).json({ error: 'Balance not found for this user' });
+    return res.status(404).json({ error: 'Balance not found' });
   }
 
   res.json(balance);
 });
 
-app.post('/api/orders', async (req: Request, res: Response) => {
+app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const { userId, instrumentId, type, orderType, qty, orderPrice, validity } = req.body;
+    const userId = req.userId as string;
+    const { instrumentId, type, orderType, qty, orderPrice, validity } = req.body;
 
     const instrument = await prisma.instrument.findUnique({
       where: { id: instrumentId },
@@ -74,6 +76,63 @@ app.post('/api/orders', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error placing order:', error);
     res.status(500).json({ error: 'Something went wrong placing the order' });
+  }
+});
+
+app.post('/api/auth/signup', async (req: Request, res: Response) => {
+  try {
+    const { email, password, fullName, mobNumber } = req.body;
+
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) {
+      return res.status(409).json({ error: 'An account with this email already exists' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        passwordHash,
+        fullName,
+        mobNumber,
+        balance: {
+          create: { availableBalance: 0, usedMargin: 0 },
+        },
+      },
+    });
+
+    res.status(201).json({ id: user.id, email: user.email, fullName: user.fullName });
+  } catch (error) {
+    console.error('Signup error:', error);
+    res.status(500).json({ error: 'Something went wrong during signup' });
+  }
+});
+
+app.post('/api/auth/login', async (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body;
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const passwordMatches = await bcrypt.compare(password, user.passwordHash);
+    if (!passwordMatches) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const token = jwt.sign(
+      { userId: user.id, role: user.role },
+      process.env.JWT_SECRET as string,
+      { expiresIn: '7d' }
+    );
+
+    res.json({ token, user: { id: user.id, email: user.email, fullName: user.fullName } });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Something went wrong during login' });
   }
 });
 

@@ -9,13 +9,17 @@ datasource db {
 // ==========================================
 // AUTH & USER
 // ==========================================
-
+enum Role {
+  USER
+  ADMIN
+}
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
   passwordHash String
   fullName     String
   mobNumber    String
+  role         Role     @default(USER)
   createdAt    DateTime @default(now())
 
   account    Account?
