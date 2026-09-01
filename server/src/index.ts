@@ -136,6 +136,114 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
   }
 });
 
+app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+   const userId = req.userId as string;
+const rawOrderId = req.params.orderId;
+
+if (!rawOrderId || Array.isArray(rawOrderId)) {
+  return res.status(400).json({ error: 'Order ID is required' });
+}
+
+cconst orderId: string = rawOrderId;
+
+const order = await prisma.order.findUnique({ where: { id: orderId } });
+
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    if (order.userId !== userId) {
+      return res.status(403).json({ error: 'This order does not belong to you' });
+    }
+
+    if (order.status !== 'pending') {
+      return res.status(400).json({ error: `Order is already ${order.status}` });
+    }
+
+    const BROKERAGE_FLAT_FEE = 20;
+    const totalPrice = order.qty * Number(order.orderPrice);
+
+    if (order.type === 'sell') {
+      const holding = await prisma.holding.findFirst({
+        where: { userId, instrumentId: order.instrumentId },
+      });
+
+      if (!holding || holding.qty < order.qty) {
+        return res.status(400).json({ error: 'Insufficient holdings to sell this quantity' });
+      }
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const trade = await tx.trade.create({
+        data: {
+          userId,
+          instrumentId: order.instrumentId,
+          orderId: order.id,
+          pricePerShare: order.orderPrice,
+          sharesQty: order.qty,
+          totalPrice,
+          brokerage: BROKERAGE_FLAT_FEE,
+        },
+      });
+
+      await tx.order.update({
+        where: { id: order.id },
+        data: { status: 'executed' },
+      });
+
+      const existingHolding = await tx.holding.findFirst({
+        where: { userId, instrumentId: order.instrumentId },
+      });
+
+      if (order.type === 'buy') {
+        if (existingHolding) {
+          await tx.holding.update({
+            where: { id: existingHolding.id },
+            data: {
+              qty: existingHolding.qty + order.qty,
+              investedValue: Number(existingHolding.investedValue) + totalPrice,
+            },
+          });
+        } else {
+          await tx.holding.create({
+            data: {
+              userId,
+              instrumentId: order.instrumentId,
+              qty: order.qty,
+              investedValue: totalPrice,
+            },
+          });
+        }
+      } else {
+        const holding = existingHolding!;
+        const remainingQty = holding.qty - order.qty;
+
+        if (remainingQty === 0) {
+          await tx.holding.delete({ where: { id: holding.id } });
+        } else {
+          const avgPricePerShare = Number(holding.investedValue) / holding.qty;
+          await tx.holding.update({
+            where: { id: holding.id },
+            data: {
+              qty: remainingQty,
+              investedValue: remainingQty * avgPricePerShare,
+            },
+          });
+        }
+      }
+
+      return trade;
+    });
+
+    res.status(201).json({ message: 'Order executed successfully', trade: result });
+  } catch (error) {
+    console.error('Error executing order:', error);
+    res.status(500).json({ error: 'Something went wrong executing the order' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
