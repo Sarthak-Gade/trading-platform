@@ -145,7 +145,7 @@ if (!rawOrderId || Array.isArray(rawOrderId)) {
   return res.status(400).json({ error: 'Order ID is required' });
 }
 
-cconst orderId: string = rawOrderId;
+const orderId: string = rawOrderId;
 
 const order = await prisma.order.findUnique({ where: { id: orderId } });
 
