@@ -3,6 +3,9 @@ import prisma from './lib/prisma';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { requireAuth, AuthRequest } from './middleware/auth';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+import { connectToFinnhub } from './lib/finnhub';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -299,6 +302,21 @@ app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, r
   }
 });
 
-app.listen(PORT, () => {
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: { origin: '*' },
+});
+
+connectToFinnhub(io);
+
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
+
+httpServer.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
