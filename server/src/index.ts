@@ -28,7 +28,7 @@ app.get('/api/me/balance', requireAuth, async (req: AuthRequest, res: Response) 
 app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;
-    const { instrumentId, type, orderType, qty, orderPrice, validity } = req.body;
+    const { instrumentId, type, orderType, productType, qty, orderPrice, validity } = req.body;
 
     const instrument = await prisma.instrument.findUnique({
       where: { id: instrumentId },
@@ -58,6 +58,7 @@ app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => 
         instrumentId,
         type,
         orderType,
+        productType: productType || 'CNC',
         qty,
         orderPrice,
         validity,
@@ -135,20 +136,18 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Something went wrong during login' });
   }
 });
-
 app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-   const userId = req.userId as string;
-const rawOrderId = req.params.orderId;
+    const userId = req.userId as string;
+    const rawOrderId = req.params.orderId;
 
-if (!rawOrderId || Array.isArray(rawOrderId)) {
-  return res.status(400).json({ error: 'Order ID is required' });
-}
+    if (!rawOrderId || Array.isArray(rawOrderId)) {
+      return res.status(400).json({ error: 'Order ID is required' });
+    }
 
-const orderId: string = rawOrderId;
+    const orderId: string = rawOrderId;
 
-const order = await prisma.order.findUnique({ where: { id: orderId } });
-
+    const order = await prisma.order.findUnique({ where: { id: orderId } });
 
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
@@ -165,13 +164,22 @@ const order = await prisma.order.findUnique({ where: { id: orderId } });
     const BROKERAGE_FLAT_FEE = 20;
     const totalPrice = order.qty * Number(order.orderPrice);
 
+    // Single, correct sell-validation block (checks Position for MIS/NRML, Holding for CNC)
     if (order.type === 'sell') {
-      const holding = await prisma.holding.findFirst({
-        where: { userId, instrumentId: order.instrumentId },
-      });
-
-      if (!holding || holding.qty < order.qty) {
-        return res.status(400).json({ error: 'Insufficient holdings to sell this quantity' });
+      if (order.productType === 'MIS' || order.productType === 'NRML') {
+        const position = await prisma.position.findFirst({
+          where: { userId, instrumentId: order.instrumentId, productType: order.productType },
+        });
+        if (!position || position.netQty < order.qty) {
+          return res.status(400).json({ error: 'Insufficient position quantity to sell' });
+        }
+      } else {
+        const holding = await prisma.holding.findFirst({
+          where: { userId, instrumentId: order.instrumentId },
+        });
+        if (!holding || holding.qty < order.qty) {
+          return res.status(400).json({ error: 'Insufficient holdings to sell this quantity' });
+        }
       }
     }
 
@@ -193,44 +201,91 @@ const order = await prisma.order.findUnique({ where: { id: orderId } });
         data: { status: 'executed' },
       });
 
-      const existingHolding = await tx.holding.findFirst({
-        where: { userId, instrumentId: order.instrumentId },
-      });
+      if (order.productType === 'MIS' || order.productType === 'NRML') {
+        // Intraday / F&O → Positions
+        const existingPosition = await tx.position.findFirst({
+          where: { userId, instrumentId: order.instrumentId, productType: order.productType },
+        });
 
-      if (order.type === 'buy') {
-        if (existingHolding) {
-          await tx.holding.update({
-            where: { id: existingHolding.id },
-            data: {
-              qty: existingHolding.qty + order.qty,
-              investedValue: Number(existingHolding.investedValue) + totalPrice,
-            },
-          });
+        if (order.type === 'buy') {
+          if (existingPosition) {
+            const newNetQty = existingPosition.netQty + order.qty;
+            const newAvgPrice =
+              (Number(existingPosition.avgPrice) * existingPosition.netQty + totalPrice) / newNetQty;
+
+            await tx.position.update({
+              where: { id: existingPosition.id },
+              data: { netQty: newNetQty, avgPrice: newAvgPrice },
+            });
+          } else {
+            await tx.position.create({
+              data: {
+                userId,
+                instrumentId: order.instrumentId,
+                productType: order.productType,
+                netQty: order.qty,
+                avgPrice: order.orderPrice,
+              },
+            });
+          }
         } else {
-          await tx.holding.create({
-            data: {
-              userId,
-              instrumentId: order.instrumentId,
-              qty: order.qty,
-              investedValue: totalPrice,
-            },
-          });
+          const position = existingPosition!;
+          const realizedPnl = (Number(order.orderPrice) - Number(position.avgPrice)) * order.qty;
+          const newNetQty = position.netQty - order.qty;
+
+          if (newNetQty === 0) {
+            await tx.position.delete({ where: { id: position.id } });
+          } else {
+            await tx.position.update({
+              where: { id: position.id },
+              data: {
+                netQty: newNetQty,
+                realizedPnl: Number(position.realizedPnl) + realizedPnl,
+              },
+            });
+          }
         }
       } else {
-        const holding = existingHolding!;
-        const remainingQty = holding.qty - order.qty;
+        // CNC (delivery) → Holdings
+        const existingHolding = await tx.holding.findFirst({
+          where: { userId, instrumentId: order.instrumentId },
+        });
 
-        if (remainingQty === 0) {
-          await tx.holding.delete({ where: { id: holding.id } });
+        if (order.type === 'buy') {
+          if (existingHolding) {
+            await tx.holding.update({
+              where: { id: existingHolding.id },
+              data: {
+                qty: existingHolding.qty + order.qty,
+                investedValue: Number(existingHolding.investedValue) + totalPrice,
+              },
+            });
+          } else {
+            await tx.holding.create({
+              data: {
+                userId,
+                instrumentId: order.instrumentId,
+                qty: order.qty,
+                investedValue: totalPrice,
+              },
+            });
+          }
         } else {
-          const avgPricePerShare = Number(holding.investedValue) / holding.qty;
-          await tx.holding.update({
-            where: { id: holding.id },
-            data: {
-              qty: remainingQty,
-              investedValue: remainingQty * avgPricePerShare,
-            },
-          });
+          const holding = existingHolding!;
+          const remainingQty = holding.qty - order.qty;
+
+          if (remainingQty === 0) {
+            await tx.holding.delete({ where: { id: holding.id } });
+          } else {
+            const avgPricePerShare = Number(holding.investedValue) / holding.qty;
+            await tx.holding.update({
+              where: { id: holding.id },
+              data: {
+                qty: remainingQty,
+                investedValue: remainingQty * avgPricePerShare,
+              },
+            });
+          }
         }
       }
 
