@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { createChart, ColorType, ISeriesApi, LineSeries } from 'lightweight-charts';
+import { createChart, ColorType, LineSeries } from 'lightweight-charts';
+import type { ISeriesApi } from 'lightweight-charts';
 import { io } from 'socket.io-client';
 
 interface PriceTick {
