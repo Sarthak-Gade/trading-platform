@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import PriceChart from './PriceChart';
+import OrderForm from './OrderForm';
 
 interface Balance {
   availableBalance: string;
@@ -14,12 +15,7 @@ function Dashboard() {
   const [balance, setBalance] = useState<Balance | null>(null);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    if (!token) {
-      navigate('/login');
-      return;
-    }
-
+  const fetchBalance = () => {
     fetch('http://localhost:5000/api/me/balance', {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -29,6 +25,14 @@ function Dashboard() {
       })
       .then((data) => setBalance(data))
       .catch(() => setError('Could not load balance'));
+  };
+
+  useEffect(() => {
+    if (!token) {
+      navigate('/login');
+      return;
+    }
+    fetchBalance();
   }, [token, navigate]);
 
   const handleLogout = () => {
@@ -52,6 +56,8 @@ function Dashboard() {
           <p>Used Margin: ₹{balance.usedMargin}</p>
         </div>
       )}
+
+      <OrderForm onOrderPlaced={fetchBalance} />
 
       <h2>Live Price Chart — BTC/USDT</h2>
       <PriceChart />

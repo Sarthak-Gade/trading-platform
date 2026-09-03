@@ -6,8 +6,10 @@ import { requireAuth, AuthRequest } from './middleware/auth';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { connectToFinnhub } from './lib/finnhub';
+import cors from 'cors';
 
 const app = express();
+app.use(cors());
 const PORT = process.env.PORT || 5000;
 
 app.use(express.json());
