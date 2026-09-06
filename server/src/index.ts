@@ -141,6 +141,39 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Something went wrong during login' });
   }
 });
+
+app.get('/api/me/holdings', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+
+    const holdings = await prisma.holding.findMany({
+      where: { userId },
+      include: { instrument: true },
+    });
+
+    res.json(holdings);
+  } catch (error) {
+    console.error('Error fetching holdings:', error);
+    res.status(500).json({ error: 'Something went wrong fetching holdings' });
+  }
+});
+
+app.get('/api/me/positions', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+
+    const positions = await prisma.position.findMany({
+      where: { userId },
+      include: { instrument: true },
+    });
+
+    res.json(positions);
+  } catch (error) {
+    console.error('Error fetching positions:', error);
+    res.status(500).json({ error: 'Something went wrong fetching positions' });
+  }
+});
+
 app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;

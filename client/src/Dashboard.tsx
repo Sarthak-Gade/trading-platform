@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import PriceChart from './PriceChart';
 import OrderForm from './OrderForm';
+import Holdings from './Holdings';
+import Positions from './Positions';
 
 interface Balance {
   availableBalance: string;
@@ -58,7 +60,8 @@ function Dashboard() {
       )}
 
       <OrderForm onOrderPlaced={fetchBalance} />
-
+      <Holdings />
+      <Positions />
       <h2>Live Price Chart — BTC/USDT</h2>
       <PriceChart />
     </div>
