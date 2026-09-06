@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
+import { useNavigate, Link } from 'react-router-dom';
 
 function Login() {
   const [email, setEmail] = useState('');
@@ -63,6 +63,9 @@ function Login() {
           Log In
         </button>
       </form>
+      <p style={{ marginTop: '1rem' }}>
+  Don't have an account? <Link to="/signup">Sign up</Link>
+</p>
     </div>
   );
 }
