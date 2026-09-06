@@ -158,6 +158,71 @@ app.get('/api/me/holdings', requireAuth, async (req: AuthRequest, res: Response)
   }
 });
 
+app.post('/api/alerts', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const { instrumentId, triggerPrice, condition } = req.body;
+
+    const instrument = await prisma.instrument.findUnique({ where: { id: instrumentId } });
+    if (!instrument) {
+      return res.status(404).json({ error: 'Instrument not found' });
+    }
+
+    const alert = await prisma.alert.create({
+      data: { userId, instrumentId, triggerPrice, condition },
+    });
+
+    res.status(201).json(alert);
+  } catch (error) {
+    console.error('Error creating alert:', error);
+    res.status(500).json({ error: 'Something went wrong creating the alert' });
+  }
+});
+
+app.get('/api/me/alerts', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+
+    const alerts = await prisma.alert.findMany({
+      where: { userId },
+      include: { instrument: true },
+    });
+
+    res.json(alerts);
+  } catch (error) {
+    console.error('Error fetching alerts:', error);
+    res.status(500).json({ error: 'Something went wrong fetching alerts' });
+  }
+});
+
+app.delete('/api/alerts/:alertId', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const rawAlertId = req.params.alertId;
+
+    if (!rawAlertId || Array.isArray(rawAlertId)) {
+      return res.status(400).json({ error: 'Alert ID is required' });
+    }
+
+    const alert = await prisma.alert.findUnique({ where: { id: rawAlertId } });
+
+    if (!alert) {
+      return res.status(404).json({ error: 'Alert not found' });
+    }
+
+    if (alert.userId !== userId) {
+      return res.status(403).json({ error: 'This alert does not belong to you' });
+    }
+
+    await prisma.alert.delete({ where: { id: rawAlertId } });
+
+    res.json({ message: 'Alert deleted' });
+  } catch (error) {
+    console.error('Error deleting alert:', error);
+    res.status(500).json({ error: 'Something went wrong deleting the alert' });
+  }
+});
+
 app.get('/api/me/positions', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;

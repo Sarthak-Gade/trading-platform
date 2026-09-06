@@ -5,6 +5,7 @@ import PriceChart from './PriceChart';
 import OrderForm from './OrderForm';
 import Holdings from './Holdings';
 import Positions from './Positions';
+import Alerts from './Alerts';
 
 interface Balance {
   availableBalance: string;
@@ -61,7 +62,9 @@ function Dashboard() {
 
       <OrderForm onOrderPlaced={fetchBalance} />
       <Holdings />
-      <Positions />
+      <Positions/>
+      
+      <Alerts />
       <h2>Live Price Chart — BTC/USDT</h2>
       <PriceChart />
     </div>

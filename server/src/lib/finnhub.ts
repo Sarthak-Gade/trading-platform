@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import { Server } from 'socket.io';
+import prisma from './prisma';
 
 export function connectToFinnhub(io: Server) {
   const apiKey = process.env.FINNHUB_API_KEY;
@@ -16,13 +17,36 @@ export function connectToFinnhub(io: Server) {
     finnhubSocket.send(JSON.stringify({ type: 'subscribe', symbol: 'BINANCE:BTCUSDT' }));
   });
 
-  finnhubSocket.on('message', (data) => {
-    const parsed = JSON.parse(data.toString());
+  finnhubSocket.on('message', async (data) => {
+  const parsed = JSON.parse(data.toString());
 
-    if (parsed.type === 'trade' && parsed.data) {
-      io.emit('priceUpdate', parsed.data);
+  if (parsed.type === 'trade' && parsed.data) {
+    io.emit('priceUpdate', parsed.data);
+
+    const latestTick = parsed.data[parsed.data.length - 1];
+    if (latestTick) {
+      const activeAlerts = await prisma.alert.findMany({
+        where: { status: 'active' },
+      });
+
+      for (const alert of activeAlerts) {
+        const price = latestTick.p;
+        const target = Number(alert.triggerPrice);
+        const shouldTrigger =
+          (alert.condition === 'above' && price >= target) ||
+          (alert.condition === 'below' && price <= target);
+
+        if (shouldTrigger) {
+          await prisma.alert.update({
+            where: { id: alert.id },
+            data: { status: 'triggered' },
+          });
+          io.emit('alertTriggered', { alertId: alert.id, price });
+        }
+      }
     }
-  });
+  }
+});
 
   finnhubSocket.on('error', (error) => {
     console.error('Finnhub WebSocket error:', error);
