@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import prisma from './lib/prisma';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { requireAuth, AuthRequest } from './middleware/auth';
+import { requireAuth,requireAdmin, AuthRequest } from './middleware/auth';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { connectToFinnhub } from './lib/finnhub';
@@ -84,6 +84,42 @@ app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => 
   } catch (error) {
     console.error('Error placing order:', error);
     res.status(500).json({ error: 'Something went wrong placing the order' });
+  }
+});
+
+app.get('/api/admin/stats', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const totalUsers = await prisma.user.count();
+    const totalOrders = await prisma.order.count();
+    const totalTrades = await prisma.trade.count();
+    const pendingOrders = await prisma.order.count({ where: { status: 'pending' } });
+    const executedOrders = await prisma.order.count({ where: { status: 'executed' } });
+
+    const tradeVolume = await prisma.trade.aggregate({
+      _sum: { totalPrice: true },
+    });
+
+    const recentTrades = await prisma.trade.findMany({
+      take: 10,
+      orderBy: { executedAt: 'desc' },
+      include: {
+        user: { select: { email: true, fullName: true } },
+        instrument: { select: { symbol: true } },
+      },
+    });
+
+    res.json({
+      totalUsers,
+      totalOrders,
+      totalTrades,
+      pendingOrders,
+      executedOrders,
+      totalTradeVolume: tradeVolume._sum.totalPrice ?? 0,
+      recentTrades,
+    });
+  } catch (error) {
+    console.error('Error fetching admin stats:', error);
+    res.status(500).json({ error: 'Something went wrong fetching admin stats' });
   }
 });
 

@@ -35,11 +35,11 @@ function Positions() {
     const socket = io('http://localhost:5000');
 
     socket.on('priceUpdate', (data: PriceTick[]) => {
-      const latest = data[data.length - 1];
-      if (latest) {
-        setCurrentPrice(latest.p);
-      }
-    });
+  const relianceTick = data.find((tick) => tick.s === 'RELIANCE.NS');
+  if (relianceTick) {
+    setCurrentPrice(relianceTick.p);
+  }
+});
 
     return () => {
       socket.disconnect();
