@@ -6,6 +6,8 @@ import OrderForm from './OrderForm';
 import Holdings from './Holdings';
 import Positions from './Positions';
 import Alerts from './Alerts';
+import OrderBook from './OrderBook';
+import TradeBook from './TradeBook';
 
 interface Balance {
   availableBalance: string;
@@ -62,9 +64,10 @@ function Dashboard() {
 
       <OrderForm onOrderPlaced={fetchBalance} />
       <Holdings />
-      <Positions/>
-      
+      <Positions/>     
       <Alerts />
+      <OrderBook />
+      <TradeBook />
 <h2>Live Price Chart — RELIANCE (NSE)</h2>      <PriceChart />
     </div>
   );

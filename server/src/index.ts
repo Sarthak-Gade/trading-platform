@@ -277,6 +277,40 @@ app.get('/api/me/positions', requireAuth, async (req: AuthRequest, res: Response
   }
 });
 
+app.get('/api/me/orders', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+
+    const orders = await prisma.order.findMany({
+      where: { userId },
+      include: { instrument: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(orders);
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    res.status(500).json({ error: 'Something went wrong fetching orders' });
+  }
+});
+
+app.get('/api/me/trades', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+
+    const trades = await prisma.trade.findMany({
+      where: { userId },
+      include: { instrument: true },
+      orderBy: { executedAt: 'desc' },
+    });
+
+    res.json(trades);
+  } catch (error) {
+    console.error('Error fetching trades:', error);
+    res.status(500).json({ error: 'Something went wrong fetching trades' });
+  }
+});
+
 app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;
