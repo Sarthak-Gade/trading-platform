@@ -7,6 +7,8 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { connectToFinnhub } from './lib/finnhub';
 import cors from 'cors';
+import { startNSEPolling } from './lib/nseIndia';
+import { startYahooFinancePolling } from './lib/yahooFinance';
 
 const app = express();
 app.use(cors());
@@ -408,6 +410,7 @@ const io = new Server(httpServer, {
 });
 
 connectToFinnhub(io);
+startYahooFinancePolling(io, ['RELIANCE.NS']);
 
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);

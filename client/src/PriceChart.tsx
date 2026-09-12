@@ -39,13 +39,15 @@ function PriceChart() {
     const socket = io('http://localhost:5000');
 
     socket.on('priceUpdate', (data: PriceTick[]) => {
-      data.forEach((tick) => {
-        seriesRef.current?.update({
-          time: Math.floor(tick.t / 1000) as any,
-          value: tick.p,
-        });
-      });
+  data.forEach((tick) => {
+    if (tick.s !== 'RELIANCE.NS') return;
+
+    seriesRef.current?.update({
+      time: Math.floor(tick.t / 1000) as any,
+      value: tick.p,
     });
+  });
+});
 
     const handleResize = () => {
       if (chartContainerRef.current) {

@@ -65,8 +65,7 @@ function Dashboard() {
       <Positions/>
       
       <Alerts />
-      <h2>Live Price Chart — BTC/USDT</h2>
-      <PriceChart />
+<h2>Live Price Chart — RELIANCE (NSE)</h2>      <PriceChart />
     </div>
   );
 }
