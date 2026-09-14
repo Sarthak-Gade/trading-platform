@@ -474,6 +474,160 @@ app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, r
   }
 });
 
+app.post('/api/watchlists', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const { name } = req.body;
+
+    const watchlist = await prisma.watchlist.create({
+      data: { userId, name },
+    });
+
+    res.status(201).json(watchlist);
+  } catch (error) {
+    console.error('Error creating watchlist:', error);
+    res.status(500).json({ error: 'Something went wrong creating the watchlist' });
+  }
+});
+
+app.get('/api/me/watchlists', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+
+    const watchlists = await prisma.watchlist.findMany({
+      where: { userId },
+    });
+
+    res.json(watchlists);
+  } catch (error) {
+    console.error('Error fetching watchlists:', error);
+    res.status(500).json({ error: 'Something went wrong fetching watchlists' });
+  }
+});
+
+app.delete('/api/watchlists/:watchlistId', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const rawId = req.params.watchlistId;
+
+    if (!rawId || Array.isArray(rawId)) {
+      return res.status(400).json({ error: 'Watchlist ID is required' });
+    }
+
+    const watchlist = await prisma.watchlist.findUnique({ where: { id: rawId } });
+
+    if (!watchlist) {
+      return res.status(404).json({ error: 'Watchlist not found' });
+    }
+
+    if (watchlist.userId !== userId) {
+      return res.status(403).json({ error: 'This watchlist does not belong to you' });
+    }
+
+    await prisma.watchlist.delete({ where: { id: rawId } });
+
+    res.json({ message: 'Watchlist deleted' });
+  } catch (error) {
+    console.error('Error deleting watchlist:', error);
+    res.status(500).json({ error: 'Something went wrong deleting the watchlist' });
+  }
+});
+
+app.post('/api/watchlists/:watchlistId/items', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const rawWatchlistId = req.params.watchlistId;
+    const { instrumentId } = req.body;
+
+    if (!rawWatchlistId || Array.isArray(rawWatchlistId)) {
+      return res.status(400).json({ error: 'Watchlist ID is required' });
+    }
+
+    const watchlist = await prisma.watchlist.findUnique({ where: { id: rawWatchlistId } });
+
+    if (!watchlist) {
+      return res.status(404).json({ error: 'Watchlist not found' });
+    }
+
+    if (watchlist.userId !== userId) {
+      return res.status(403).json({ error: 'This watchlist does not belong to you' });
+    }
+
+    const instrument = await prisma.instrument.findUnique({ where: { id: instrumentId } });
+
+    if (!instrument) {
+      return res.status(404).json({ error: 'Instrument not found' });
+    }
+
+    const item = await prisma.watchlistItem.create({
+      data: { watchlistId: rawWatchlistId, instrumentId },
+    });
+
+    res.status(201).json(item);
+  } catch (error) {
+    console.error('Error adding watchlist item:', error);
+    res.status(500).json({ error: 'Something went wrong adding to the watchlist' });
+  }
+});
+
+app.get('/api/watchlists/:watchlistId', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const rawWatchlistId = req.params.watchlistId;
+
+    if (!rawWatchlistId || Array.isArray(rawWatchlistId)) {
+      return res.status(400).json({ error: 'Watchlist ID is required' });
+    }
+
+    const watchlist = await prisma.watchlist.findUnique({
+      where: { id: rawWatchlistId },
+      include: { items: { include: { instrument: true } } },
+    });
+
+    if (!watchlist) {
+      return res.status(404).json({ error: 'Watchlist not found' });
+    }
+
+    if (watchlist.userId !== userId) {
+      return res.status(403).json({ error: 'This watchlist does not belong to you' });
+    }
+
+    res.json(watchlist);
+  } catch (error) {
+    console.error('Error fetching watchlist:', error);
+    res.status(500).json({ error: 'Something went wrong fetching the watchlist' });
+  }
+});
+
+app.delete('/api/watchlists/:watchlistId/items/:itemId', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const rawWatchlistId = req.params.watchlistId;
+    const rawItemId = req.params.itemId;
+
+    if (!rawWatchlistId || Array.isArray(rawWatchlistId) || !rawItemId || Array.isArray(rawItemId)) {
+      return res.status(400).json({ error: 'Watchlist ID and Item ID are required' });
+    }
+
+    const watchlist = await prisma.watchlist.findUnique({ where: { id: rawWatchlistId } });
+
+    if (!watchlist) {
+      return res.status(404).json({ error: 'Watchlist not found' });
+    }
+
+    if (watchlist.userId !== userId) {
+      return res.status(403).json({ error: 'This watchlist does not belong to you' });
+    }
+
+    await prisma.watchlistItem.delete({ where: { id: rawItemId } });
+
+    res.json({ message: 'Item removed from watchlist' });
+  } catch (error) {
+    console.error('Error removing watchlist item:', error);
+    res.status(500).json({ error: 'Something went wrong removing the item' });
+  }
+});
+
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: '*' },

@@ -73,6 +73,7 @@ model Instrument {
   positions Position[]
   holdings  Holding[]
   alerts    Alert[]
+  watchlistItems WatchlistItem[]
 }
 
 // ==========================================
@@ -163,6 +164,17 @@ model Watchlist {
 
   user   User   @relation(fields: [userId], references: [id])
   userId String
+
+  items WatchlistItem[]
+}
+
+model WatchlistItem {
+  id String @id @default(uuid())
+
+  watchlist    Watchlist  @relation(fields: [watchlistId], references: [id])
+  watchlistId  String
+  instrument   Instrument @relation(fields: [instrumentId], references: [id])
+  instrumentId String
 }
 
 model Alert {

@@ -8,6 +8,7 @@ import Positions from './Positions';
 import Alerts from './Alerts';
 import OrderBook from './OrderBook';
 import TradeBook from './TradeBook';
+import Watchlist from './Watchlist';
 
 interface Balance {
   availableBalance: string;
@@ -68,6 +69,7 @@ function Dashboard() {
       <Alerts />
       <OrderBook />
       <TradeBook />
+      <Watchlist />
 <h2>Live Price Chart — RELIANCE (NSE)</h2>      <PriceChart />
     </div>
   );
