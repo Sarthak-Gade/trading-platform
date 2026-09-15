@@ -699,6 +699,63 @@ app.patch('/api/me/account', requireAuth, async (req: AuthRequest, res: Response
   }
 });
 
+app.post('/api/me/banks', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const { accountNumber, ifscCode, bankBranch } = req.body;
+
+    const bank = await prisma.bank.create({
+      data: { userId, accountNumber, ifscCode, bankBranch, status: 'pending' },
+    });
+
+    res.status(201).json(bank);
+  } catch (error) {
+    console.error('Error adding bank account:', error);
+    res.status(500).json({ error: 'Something went wrong adding the bank account' });
+  }
+});
+
+app.get('/api/me/banks', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+
+    const banks = await prisma.bank.findMany({ where: { userId } });
+
+    res.json(banks);
+  } catch (error) {
+    console.error('Error fetching bank accounts:', error);
+    res.status(500).json({ error: 'Something went wrong fetching bank accounts' });
+  }
+});
+
+app.delete('/api/me/banks/:bankId', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const rawBankId = req.params.bankId;
+
+    if (!rawBankId || Array.isArray(rawBankId)) {
+      return res.status(400).json({ error: 'Bank ID is required' });
+    }
+
+    const bank = await prisma.bank.findUnique({ where: { id: rawBankId } });
+
+    if (!bank) {
+      return res.status(404).json({ error: 'Bank account not found' });
+    }
+
+    if (bank.userId !== userId) {
+      return res.status(403).json({ error: 'This bank account does not belong to you' });
+    }
+
+    await prisma.bank.delete({ where: { id: rawBankId } });
+
+    res.json({ message: 'Bank account removed' });
+  } catch (error) {
+    console.error('Error deleting bank account:', error);
+    res.status(500).json({ error: 'Something went wrong deleting the bank account' });
+  }
+});
+
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: '*' },
