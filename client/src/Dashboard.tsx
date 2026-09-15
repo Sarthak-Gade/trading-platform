@@ -9,6 +9,7 @@ import Alerts from './Alerts';
 import OrderBook from './OrderBook';
 import TradeBook from './TradeBook';
 import Watchlist from './Watchlist';
+import Profile from './Profile';
 
 interface Balance {
   availableBalance: string;
@@ -63,6 +64,7 @@ function Dashboard() {
         </div>
       )}
 
+      <Profile />
       <OrderForm onOrderPlaced={fetchBalance} />
       <Holdings />
       <Positions/>     

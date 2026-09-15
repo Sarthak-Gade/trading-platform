@@ -628,6 +628,77 @@ app.delete('/api/watchlists/:watchlistId/items/:itemId', requireAuth, async (req
   }
 });
 
+app.post('/api/me/account', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const { dob, pan_no, gender, maritalStatus, occupation, incomeRange } = req.body;
+
+    const existing = await prisma.account.findUnique({ where: { userId } });
+    if (existing) {
+      return res.status(409).json({ error: 'Account details already exist for this user' });
+    }
+
+    const uniqueClientCode = `UCC${Date.now()}`;
+
+    const account = await prisma.account.create({
+      data: {
+        userId,
+        dob: new Date(dob),
+        pan_no,
+        gender,
+        maritalStatus,
+        occupation,
+        incomeRange,
+        uniqueClientCode,
+      },
+    });
+
+    res.status(201).json(account);
+  } catch (error) {
+    console.error('Error creating account details:', error);
+    res.status(500).json({ error: 'Something went wrong saving account details' });
+  }
+});
+
+app.get('/api/me/account', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+
+    const account = await prisma.account.findUnique({ where: { userId } });
+
+    if (!account) {
+      return res.status(404).json({ error: 'Account details not found' });
+    }
+
+    res.json(account);
+  } catch (error) {
+    console.error('Error fetching account details:', error);
+    res.status(500).json({ error: 'Something went wrong fetching account details' });
+  }
+});
+
+app.patch('/api/me/account', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const { gender, maritalStatus, occupation, incomeRange } = req.body;
+
+    const existing = await prisma.account.findUnique({ where: { userId } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Account details not found. Create them first.' });
+    }
+
+    const updated = await prisma.account.update({
+      where: { userId },
+      data: { gender, maritalStatus, occupation, incomeRange },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('Error updating account details:', error);
+    res.status(500).json({ error: 'Something went wrong updating account details' });
+  }
+});
+
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: '*' },
