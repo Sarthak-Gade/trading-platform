@@ -18,7 +18,7 @@ interface Balance {
 }
 
 function Dashboard() {
-  const { token, logout } = useAuth();
+  const { token } = useAuth();
   const navigate = useNavigate();
   const [balance, setBalance] = useState<Balance | null>(null);
   const [error, setError] = useState('');
@@ -43,38 +43,58 @@ function Dashboard() {
     fetchBalance();
   }, [token, navigate]);
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
-  };
-
   return (
-    <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1>Dashboard</h1>
-        <button onClick={handleLogout}>Log Out</button>
-      </div>
-
+    <div className="dashboard-grid">
       {error && <p style={{ color: 'red' }}>{error}</p>}
 
       {balance && (
-        <div style={{ marginBottom: '2rem' }}>
+        <div className="card">
           <h2>Balance</h2>
           <p>Available: ₹{balance.availableBalance}</p>
           <p>Used Margin: ₹{balance.usedMargin}</p>
         </div>
       )}
 
-      <Profile />
-      <BankAccounts />
-      <OrderForm onOrderPlaced={fetchBalance} />
-      <Holdings />
-      <Positions/>     
-      <Alerts />
-      <OrderBook />
-      <TradeBook />
-      <Watchlist />
-<h2>Live Price Chart — RELIANCE (NSE)</h2>      <PriceChart />
+      <div className="card">
+        <Profile />
+      </div>
+
+      <div className="card">
+        <BankAccounts />
+      </div>
+
+      <div className="card">
+        <OrderForm onOrderPlaced={fetchBalance} />
+      </div>
+
+      <div className="card">
+        <Holdings />
+      </div>
+
+      <div className="card">
+        <Positions />
+      </div>
+
+      <div className="card">
+        <Alerts />
+      </div>
+
+      <div className="card">
+        <Watchlist />
+      </div>
+
+      <div className="card full-width">
+        <OrderBook />
+      </div>
+
+      <div className="card full-width">
+        <TradeBook />
+      </div>
+
+      <div className="card full-width">
+        <h2>Live Price Chart — RELIANCE (NSE)</h2>
+        <PriceChart />
+      </div>
     </div>
   );
 }
