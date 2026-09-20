@@ -33,69 +33,6 @@ app.get('/api/me/balance', requireAuth, async (req: AuthRequest, res: Response) 
   res.json(balance);
 });
 
-app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => {
-  try {
-    const userId = req.userId as string;
-    const { instrumentId, type, orderType, productType, qty, orderPrice, validity } = req.body;
-
-    const instrument = await prisma.instrument.findUnique({
-      where: { id: instrumentId },
-    });
-
-    if (!instrument) {
-      return res.status(404).json({ error: 'Instrument not found' });
-    }
-
-    const balance = await prisma.balance.findUnique({
-      where: { userId },
-    });
-
-    if (!balance) {
-      return res.status(404).json({ error: 'User balance not found' });
-    }
-
-    const orderValue = qty * orderPrice;
-
-    if (Number(balance.availableBalance) < orderValue) {
-      return res.status(400).json({ error: 'Insufficient balance to place this order' });
-    }
-
-    const order = await prisma.order.create({
-      data: {
-        userId,
-        instrumentId,
-        type,
-        orderType,
-        productType: productType || 'CNC',
-        qty,
-        orderPrice,
-        validity,
-        status: 'pending',
-      },
-    });
-
-   const newBalance = Number(balance.availableBalance) - orderValue;
-
-await prisma.balance.update({
-  where: { userId },
-  data: { availableBalance: newBalance },
-});
-
-await recordTransaction(
-  prisma,
-  userId,
-  'trade_debit',
-  `Blocked funds for ${type.toUpperCase()} ${orderType.toUpperCase()} order on ${instrument.symbol} (Qty: ${qty})`,
-  -orderValue,
-  newBalance
-);
-
-    res.status(201).json(order);
-  } catch (error) {
-    console.error('Error placing order:', error);
-    res.status(500).json({ error: 'Something went wrong placing the order' });
-  }
-});
 
 app.get('/api/admin/stats', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
@@ -321,204 +258,100 @@ app.get('/api/me/trades', requireAuth, async (req: AuthRequest, res: Response) =
   }
 });
 
-app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, res: Response) => {
+app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;
-    const rawOrderId = req.params.orderId;
+    const { instrumentId, type, orderType, productType, qty, orderPrice, validity } = req.body;
 
-    if (!rawOrderId || Array.isArray(rawOrderId)) {
-      return res.status(400).json({ error: 'Order ID is required' });
+    const instrument = await prisma.instrument.findUnique({ where: { id: instrumentId } });
+    if (!instrument) {
+      return res.status(404).json({ error: 'Instrument not found' });
     }
 
-    const orderId: string = rawOrderId;
-
-    const order = await prisma.order.findUnique({
-      where: { id: orderId },
-      include: { instrument: true },
-    });
-
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
+    const balance = await prisma.balance.findUnique({ where: { userId } });
+    if (!balance) {
+      return res.status(404).json({ error: 'User balance not found' });
     }
 
-    if (order.userId !== userId) {
-      return res.status(403).json({ error: 'This order does not belong to you' });
-    }
+    const orderValue = qty * orderPrice;
+    const resolvedProductType = productType || 'CNC';
 
-    if (order.status !== 'pending') {
-      return res.status(400).json({ error: `Order is already ${order.status}` });
-    }
-
-    const BROKERAGE_FLAT_FEE = 20;
-    const totalPrice = order.qty * Number(order.orderPrice);
-
-    if (order.type === 'sell') {
-      if (order.productType === 'MIS' || order.productType === 'NRML') {
-        const position = await prisma.position.findFirst({
-          where: { userId, instrumentId: order.instrumentId, productType: order.productType },
-        });
-        if (!position || position.netQty < order.qty) {
-          return res.status(400).json({ error: 'Insufficient position quantity to sell' });
-        }
-      } else {
-        const holding = await prisma.holding.findFirst({
-          where: { userId, instrumentId: order.instrumentId },
-        });
-        if (!holding || holding.qty < order.qty) {
-          return res.status(400).json({ error: 'Insufficient holdings to sell this quantity' });
-        }
+    if (type === 'buy') {
+      if (Number(balance.availableBalance) < orderValue) {
+        return res.status(400).json({ error: 'Insufficient balance to place this order' });
       }
-    }
-
-    const result = await prisma.$transaction(async (tx) => {
-      const trade = await tx.trade.create({
-        data: {
+    } else {
+      // Sell: check unreserved quantity instead of blocking cash
+      const pendingSellAgg = await prisma.order.aggregate({
+        where: {
           userId,
-          instrumentId: order.instrumentId,
-          orderId: order.id,
-          pricePerShare: order.orderPrice,
-          sharesQty: order.qty,
-          totalPrice,
-          brokerage: BROKERAGE_FLAT_FEE,
+          instrumentId,
+          type: 'sell',
+          status: 'pending',
+          productType: resolvedProductType,
         },
+        _sum: { qty: true },
       });
+      const alreadyReserved = pendingSellAgg._sum.qty ?? 0;
 
-      await tx.order.update({
-        where: { id: order.id },
-        data: { status: 'executed' },
-      });
-
-      // --- Balance & ledger adjustments ---
-      const currentBalance = await tx.balance.findUnique({ where: { userId } });
-      if (!currentBalance) {
-        throw new Error('Balance not found during execution');
-      }
-
-      let runningBalance = Number(currentBalance.availableBalance);
-
-      if (order.type === 'sell') {
-        // Credit back the sale proceeds that were blocked at order placement
-        runningBalance += totalPrice;
-        await recordTransaction(
-          tx,
-          userId,
-          'trade_credit',
-          `Credited sale proceeds for SELL order on ${order.instrument.symbol} (Qty: ${order.qty})`,
-          totalPrice,
-          runningBalance
-        );
-      }
-
-      // Brokerage is charged on every executed trade, buy or sell
-      runningBalance -= BROKERAGE_FLAT_FEE;
-      await recordTransaction(
-        tx,
-        userId,
-        'charges',
-        `Brokerage charged on ${order.type.toUpperCase()} order execution for ${order.instrument.symbol}`,
-        -BROKERAGE_FLAT_FEE,
-        runningBalance
-      );
-
-      await tx.balance.update({
-        where: { userId },
-        data: { availableBalance: runningBalance },
-      });
-
-      // --- Holdings / Positions branching ---
-      if (order.productType === 'MIS' || order.productType === 'NRML') {
-        const existingPosition = await tx.position.findFirst({
-          where: { userId, instrumentId: order.instrumentId, productType: order.productType },
+      let ownedQty = 0;
+      if (resolvedProductType === 'MIS' || resolvedProductType === 'NRML') {
+        const position = await prisma.position.findFirst({
+          where: { userId, instrumentId, productType: resolvedProductType },
         });
-
-        if (order.type === 'buy') {
-          if (existingPosition) {
-            const newNetQty = existingPosition.netQty + order.qty;
-            const newAvgPrice =
-              (Number(existingPosition.avgPrice) * existingPosition.netQty + totalPrice) / newNetQty;
-
-            await tx.position.update({
-              where: { id: existingPosition.id },
-              data: { netQty: newNetQty, avgPrice: newAvgPrice },
-            });
-          } else {
-            await tx.position.create({
-              data: {
-                userId,
-                instrumentId: order.instrumentId,
-                productType: order.productType,
-                netQty: order.qty,
-                avgPrice: order.orderPrice,
-              },
-            });
-          }
-        } else {
-          const position = existingPosition!;
-          const realizedPnl = (Number(order.orderPrice) - Number(position.avgPrice)) * order.qty;
-          const newNetQty = position.netQty - order.qty;
-
-          if (newNetQty === 0) {
-            await tx.position.delete({ where: { id: position.id } });
-          } else {
-            await tx.position.update({
-              where: { id: position.id },
-              data: {
-                netQty: newNetQty,
-                realizedPnl: Number(position.realizedPnl) + realizedPnl,
-              },
-            });
-          }
-        }
+        ownedQty = position?.netQty ?? 0;
       } else {
-        const existingHolding = await tx.holding.findFirst({
-          where: { userId, instrumentId: order.instrumentId },
-        });
-
-        if (order.type === 'buy') {
-          if (existingHolding) {
-            await tx.holding.update({
-              where: { id: existingHolding.id },
-              data: {
-                qty: existingHolding.qty + order.qty,
-                investedValue: Number(existingHolding.investedValue) + totalPrice,
-              },
-            });
-          } else {
-            await tx.holding.create({
-              data: {
-                userId,
-                instrumentId: order.instrumentId,
-                qty: order.qty,
-                investedValue: totalPrice,
-              },
-            });
-          }
-        } else {
-          const holding = existingHolding!;
-          const remainingQty = holding.qty - order.qty;
-
-          if (remainingQty === 0) {
-            await tx.holding.delete({ where: { id: holding.id } });
-          } else {
-            const avgPricePerShare = Number(holding.investedValue) / holding.qty;
-            await tx.holding.update({
-              where: { id: holding.id },
-              data: {
-                qty: remainingQty,
-                investedValue: remainingQty * avgPricePerShare,
-              },
-            });
-          }
-        }
+        const holding = await prisma.holding.findFirst({ where: { userId, instrumentId } });
+        ownedQty = holding?.qty ?? 0;
       }
 
-      return trade;
+      const availableToSell = ownedQty - alreadyReserved;
+
+      if (availableToSell < qty) {
+        return res.status(400).json({
+          error: `Insufficient quantity available to sell. You have ${availableToSell} unreserved (after accounting for other pending sell orders).`,
+        });
+      }
+    }
+
+    const order = await prisma.order.create({
+      data: {
+        userId,
+        instrumentId,
+        type,
+        orderType,
+        productType: resolvedProductType,
+        qty,
+        orderPrice,
+        validity,
+        status: 'pending',
+      },
     });
 
-    res.status(201).json({ message: 'Order executed successfully', trade: result });
+    if (type === 'buy') {
+      const newBalance = Number(balance.availableBalance) - orderValue;
+
+      await prisma.balance.update({
+        where: { userId },
+        data: { availableBalance: newBalance },
+      });
+
+      await recordTransaction(
+        prisma,
+        userId,
+        'trade_debit',
+        `Blocked funds for BUY ${orderType.toUpperCase()} order on ${instrument.symbol} (Qty: ${qty})`,
+        -orderValue,
+        newBalance
+      );
+    }
+    // Sell orders: no cash movement, no ledger entry at placement —
+    // the shares themselves are reserved via the pending-order check above.
+
+    res.status(201).json(order);
   } catch (error) {
-    console.error('Error executing order:', error);
-    res.status(500).json({ error: 'Something went wrong executing the order' });
+    console.error('Error placing order:', error);
+    res.status(500).json({ error: 'Something went wrong placing the order' });
   }
 });
 
