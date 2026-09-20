@@ -11,6 +11,7 @@ import TradeBook from './TradeBook';
 import Watchlist from './Watchlist';
 import Profile from './Profile';
 import BankAccounts from './BankAccounts';
+import Wallet from './Wallet';
 
 interface Balance {
   availableBalance: string;
@@ -89,6 +90,10 @@ function Dashboard() {
 
       <div className="card full-width">
         <TradeBook />
+      </div>
+
+      <div className="card full-width">
+        <Wallet onBalanceChanged={fetchBalance} />
       </div>
 
       <div className="card full-width">

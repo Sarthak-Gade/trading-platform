@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useAuth } from './context/AuthContext';
 import { apiFetch } from './api';
+import InstrumentSearch from './InstrumentSearch';
 
-const RELIANCE_INSTRUMENT_ID = '6bbe2977-4af6-4591-9953-18e40ffc8a82';
 
 function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
   const { token } = useAuth();
@@ -12,9 +12,14 @@ function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
   const [orderPrice, setOrderPrice] = useState(2500);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [selectedInstrument, setSelectedInstrument] = useState<{ id: string; symbol: string } | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedInstrument) {
+  setError('Please select a stock first');
+  return;
+}
     setError('');
     setMessage('');
 
@@ -22,7 +27,7 @@ function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
       const order = await apiFetch('/api/orders', token, {
         method: 'POST',
         body: JSON.stringify({
-          instrumentId: RELIANCE_INSTRUMENT_ID,
+          instrumentId: selectedInstrument?.id,
           type,
           orderType: 'market',
           productType,
@@ -45,7 +50,8 @@ function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
 
   return (
     <div style={{ border: '1px solid #ccc', padding: '1rem', borderRadius: '8px', maxWidth: '400px' }}>
-      <h2>Place Order — RELIANCE</h2>
+        <h2>Place Order {selectedInstrument ? `— ${selectedInstrument.symbol}` : ''}</h2>
+        <InstrumentSearch onSelect={(inst) => setSelectedInstrument({ id: inst.id, symbol: inst.symbol })} />
       <form onSubmit={handleSubmit}>
         <div style={{ marginBottom: '0.75rem' }}>
           <label>Type: </label>

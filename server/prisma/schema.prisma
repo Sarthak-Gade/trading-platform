@@ -31,6 +31,7 @@ model User {
   watchlists Watchlist[]
   alerts     Alert[]
   balance    Balance?
+  transactions Transaction[]
 }
 
 model Balance {
@@ -40,6 +41,18 @@ model Balance {
 
   user   User   @relation(fields: [userId], references: [id])
   userId String @unique
+}
+
+model Transaction {
+  id             String   @id @default(uuid())
+  type           String   // "deposit" | "withdrawal" | "trade_debit" | "trade_credit" | "charges"
+  description    String
+  amount         Decimal  // positive for credit, negative for debit
+  runningBalance Decimal
+  createdAt      DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
 }
 
 model Account {

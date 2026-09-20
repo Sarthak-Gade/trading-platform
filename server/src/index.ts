@@ -9,6 +9,7 @@ import { connectToFinnhub } from './lib/finnhub';
 import cors from 'cors';
 import { startNSEPolling } from './lib/nseIndia';
 import { startYahooFinancePolling } from './lib/yahooFinance';
+import { recordTransaction } from './lib/ledger';
 
 const app = express();
 app.use(cors());
@@ -753,6 +754,116 @@ app.delete('/api/me/banks/:bankId', requireAuth, async (req: AuthRequest, res: R
   } catch (error) {
     console.error('Error deleting bank account:', error);
     res.status(500).json({ error: 'Something went wrong deleting the bank account' });
+  }
+});
+
+app.get('/api/instruments/search', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const query = req.query.q;
+
+    if (!query || typeof query !== 'string' || query.trim().length < 1) {
+      return res.json([]);
+    }
+
+    const results = await prisma.instrument.findMany({
+      where: {
+        OR: [
+          { symbol: { contains: query, mode: 'insensitive' } },
+          { name: { contains: query, mode: 'insensitive' } },
+        ],
+      },
+      take: 15,
+    });
+
+    res.json(results);
+  } catch (error) {
+    console.error('Error searching instruments:', error);
+    res.status(500).json({ error: 'Something went wrong searching instruments' });
+  }
+});
+
+app.post('/api/me/deposit', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const { amount } = req.body;
+
+    if (typeof amount !== 'number' || amount <= 0) {
+      return res.status(400).json({ error: 'Deposit amount must be a positive number' });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const balance = await tx.balance.findUnique({ where: { userId } });
+      if (!balance) throw new Error('Balance not found');
+
+      const newBalance = Number(balance.availableBalance) + amount;
+
+      const updated = await tx.balance.update({
+        where: { userId },
+        data: { availableBalance: newBalance },
+      });
+
+      await recordTransaction(tx, userId, 'deposit', `Deposit of ₹${amount}`, amount, newBalance);
+
+      return updated;
+    });
+
+    res.status(201).json(result);
+  } catch (error) {
+    console.error('Error processing deposit:', error);
+    res.status(500).json({ error: 'Something went wrong processing the deposit' });
+  }
+});
+
+app.post('/api/me/withdraw', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const { amount } = req.body;
+
+    if (typeof amount !== 'number' || amount <= 0) {
+      return res.status(400).json({ error: 'Withdrawal amount must be a positive number' });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const balance = await tx.balance.findUnique({ where: { userId } });
+      if (!balance) throw new Error('Balance not found');
+
+      if (Number(balance.availableBalance) < amount) {
+        throw new Error('Insufficient balance for this withdrawal');
+      }
+
+      const newBalance = Number(balance.availableBalance) - amount;
+
+      const updated = await tx.balance.update({
+        where: { userId },
+        data: { availableBalance: newBalance },
+      });
+
+      await recordTransaction(tx, userId, 'withdrawal', `Withdrawal of ₹${amount}`, -amount, newBalance);
+
+      return updated;
+    });
+
+    res.status(201).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Something went wrong processing the withdrawal';
+    console.error('Error processing withdrawal:', error);
+    res.status(400).json({ error: message });
+  }
+});
+
+app.get('/api/me/transactions', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+
+    const transactions = await prisma.transaction.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(transactions);
+  } catch (error) {
+    console.error('Error fetching transactions:', error);
+    res.status(500).json({ error: 'Something went wrong fetching transactions' });
   }
 });
 
