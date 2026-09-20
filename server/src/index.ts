@@ -74,12 +74,21 @@ app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => 
       },
     });
 
-    await prisma.balance.update({
-      where: { userId },
-      data: {
-        availableBalance: Number(balance.availableBalance) - orderValue,
-      },
-    });
+   const newBalance = Number(balance.availableBalance) - orderValue;
+
+await prisma.balance.update({
+  where: { userId },
+  data: { availableBalance: newBalance },
+});
+
+await recordTransaction(
+  prisma,
+  userId,
+  'trade_debit',
+  `Blocked funds for ${type.toUpperCase()} ${orderType.toUpperCase()} order on ${instrument.symbol} (Qty: ${qty})`,
+  -orderValue,
+  newBalance
+);
 
     res.status(201).json(order);
   } catch (error) {
@@ -323,7 +332,10 @@ app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, r
 
     const orderId: string = rawOrderId;
 
-    const order = await prisma.order.findUnique({ where: { id: orderId } });
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: { instrument: true },
+    });
 
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
@@ -340,7 +352,6 @@ app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, r
     const BROKERAGE_FLAT_FEE = 20;
     const totalPrice = order.qty * Number(order.orderPrice);
 
-    // Single, correct sell-validation block (checks Position for MIS/NRML, Holding for CNC)
     if (order.type === 'sell') {
       if (order.productType === 'MIS' || order.productType === 'NRML') {
         const position = await prisma.position.findFirst({
@@ -377,8 +388,45 @@ app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, r
         data: { status: 'executed' },
       });
 
+      // --- Balance & ledger adjustments ---
+      const currentBalance = await tx.balance.findUnique({ where: { userId } });
+      if (!currentBalance) {
+        throw new Error('Balance not found during execution');
+      }
+
+      let runningBalance = Number(currentBalance.availableBalance);
+
+      if (order.type === 'sell') {
+        // Credit back the sale proceeds that were blocked at order placement
+        runningBalance += totalPrice;
+        await recordTransaction(
+          tx,
+          userId,
+          'trade_credit',
+          `Credited sale proceeds for SELL order on ${order.instrument.symbol} (Qty: ${order.qty})`,
+          totalPrice,
+          runningBalance
+        );
+      }
+
+      // Brokerage is charged on every executed trade, buy or sell
+      runningBalance -= BROKERAGE_FLAT_FEE;
+      await recordTransaction(
+        tx,
+        userId,
+        'charges',
+        `Brokerage charged on ${order.type.toUpperCase()} order execution for ${order.instrument.symbol}`,
+        -BROKERAGE_FLAT_FEE,
+        runningBalance
+      );
+
+      await tx.balance.update({
+        where: { userId },
+        data: { availableBalance: runningBalance },
+      });
+
+      // --- Holdings / Positions branching ---
       if (order.productType === 'MIS' || order.productType === 'NRML') {
-        // Intraday / F&O → Positions
         const existingPosition = await tx.position.findFirst({
           where: { userId, instrumentId: order.instrumentId, productType: order.productType },
         });
@@ -422,7 +470,6 @@ app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, r
           }
         }
       } else {
-        // CNC (delivery) → Holdings
         const existingHolding = await tx.holding.findFirst({
           where: { userId, instrumentId: order.instrumentId },
         });
