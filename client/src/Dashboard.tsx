@@ -39,6 +39,10 @@ function Dashboard() {
       return;
     }
     fetchBalance();
+
+    // Pending limit orders can fill (or release funds) in the background, so keep the balance fresh
+    const timer = setInterval(fetchBalance, 10000);
+    return () => clearInterval(timer);
   }, [token, navigate]);
 
   return (
@@ -74,7 +78,7 @@ function Dashboard() {
       </div>
 
       <div className="card full-width">
-        <OrderBook />
+        <OrderBook onOrdersChanged={fetchBalance} />
       </div>
 
       <div className="card full-width">

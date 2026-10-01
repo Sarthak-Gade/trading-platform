@@ -75,6 +75,14 @@ function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
   const priceIsValid = effectivePrice !== null && Number.isFinite(effectivePrice) && effectivePrice > 0;
   const estimatedValue = priceIsValid ? effectivePrice * qty : null;
 
+  // For limit orders: would this fill right now, or wait for the price to move?
+  const limitFillsNow =
+    orderType === 'limit' && quote && priceIsValid
+      ? type === 'buy'
+        ? quote.price <= effectivePrice
+        : quote.price >= effectivePrice
+      : null;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -92,7 +100,9 @@ function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
     setSubmitting(true);
 
     try {
-      const order = await apiFetch('/api/orders', token, {
+      // The server fills market orders (and limit orders whose price is already reachable) right away.
+      // Other limit orders stay pending until the price reaches the limit.
+      const result = await apiFetch('/api/orders', token, {
         method: 'POST',
         body: JSON.stringify({
           instrumentId: selectedInstrument.id,
@@ -106,15 +116,21 @@ function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
         }),
       });
 
-      const result = await apiFetch(`/api/orders/${order.id}/execute`, token, {
-        method: 'POST',
-      });
-
-      setMessage(
-        `${type === 'buy' ? 'Bought' : 'Sold'} ${qty} ${selectedInstrument.symbol} at ₹${Number(
-          result.trade.pricePerShare
-        ).toFixed(2)}`
-      );
+      if (result.trade) {
+        setMessage(
+          `${type === 'buy' ? 'Bought' : 'Sold'} ${qty} ${selectedInstrument.symbol} at ₹${Number(
+            result.trade.pricePerShare
+          ).toFixed(2)}`
+        );
+      } else {
+        setMessage(
+          `Limit order placed. It will ${type === 'buy' ? 'buy' : 'sell'} ${qty} ${
+            selectedInstrument.symbol
+          } when the price ${type === 'buy' ? 'falls to' : 'rises to'} ₹${Number(limitPrice).toFixed(
+            2
+          )}. You can cancel it in the Order Book.`
+        );
+      }
       onOrderPlaced();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Order failed');
@@ -220,6 +236,16 @@ function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
             />
           )}
         </div>
+
+        {limitFillsNow !== null && (
+          <p style={{ fontSize: '0.85rem', color: limitFillsNow ? '#26a69a' : '#b8860b', margin: '0 0 0.75rem' }}>
+            {limitFillsNow
+              ? 'This price is already reachable, so the order will fill right away at the current price.'
+              : `The order will wait until the price ${type === 'buy' ? 'falls to' : 'rises to'} ₹${Number(limitPrice).toFixed(
+                  2
+                )}${type === 'buy' ? ', and the amount is held from your balance until then' : ''}.`}
+          </p>
+        )}
 
         {estimatedValue !== null && (
           <p style={{ fontSize: '0.85rem', color: '#9098ac', margin: '0 0 0.75rem' }}>

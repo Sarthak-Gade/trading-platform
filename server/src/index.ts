@@ -13,6 +13,8 @@ import { recordTransaction } from './lib/ledger';
 import { Prisma } from '@prisma/client';
 import { BROKERAGE_FLAT_FEE, HttpError, roundMoney, sendError, validateOrderInput } from './lib/trading';
 import { getQuote } from './lib/quotes';
+import { cancelOrder, fillOrder } from './lib/orderEngine';
+import { startOrderMatcher } from './lib/orderMatcher';
 
 const app = express();
 app.use(cors());
@@ -271,20 +273,24 @@ app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => 
     }
     const { instrumentId, type, orderType, productType, qty, orderPrice: requestedPrice, validity } = parsed.value;
 
-    // Market orders are priced by the server from the live quote, never from what the client sends.
-    // This network call is done before the database transaction so a slow quote can't hold it open.
-    let orderPrice: number;
-    if (orderType === 'market') {
-      const quoteInstrument = await prisma.instrument.findUnique({ where: { id: instrumentId } });
-      if (!quoteInstrument) {
-        return res.status(404).json({ error: 'Instrument not found' });
-      }
-      const quote = await getQuote(quoteInstrument.symbol, quoteInstrument.exchange);
-      orderPrice = roundMoney(quote.price);
-    } else {
-      // validateOrderInput guarantees limit orders carry a price
-      orderPrice = requestedPrice as number;
+    // Look up the live price before the database transaction, so a slow quote can't hold one open.
+    // Market orders need it. Limit orders use it only to see whether they can fill right away.
+    const quoteInstrument = await prisma.instrument.findUnique({ where: { id: instrumentId } });
+    if (!quoteInstrument) {
+      return res.status(404).json({ error: 'Instrument not found' });
     }
+
+    let livePrice: number | null = null;
+    try {
+      const quote = await getQuote(quoteInstrument.symbol, quoteInstrument.exchange);
+      livePrice = roundMoney(quote.price);
+    } catch (quoteError) {
+      if (orderType === 'market') throw quoteError;
+      // limit order: stay pending and let the background matcher try later
+    }
+
+    // Market orders are priced by the server from the live quote, never from what the client sends
+    const orderPrice: number = orderType === 'market' ? (livePrice as number) : (requestedPrice as number);
 
     const order = await prisma.$transaction(
       async (tx) => {
@@ -298,7 +304,7 @@ app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => 
 
           // Atomic check-and-block: the WHERE clause fails if funds are short,
           // so two parallel orders can never spend the same money.
-          // We require room for the brokerage fee too, which is charged at execution.
+          // We require room for the brokerage fee too, which is charged when the order fills.
           const blocked = await tx.balance.updateMany({
             where: { userId, availableBalance: { gte: orderValue + BROKERAGE_FLAT_FEE } },
             data: { availableBalance: { decrement: orderValue } },
@@ -349,202 +355,39 @@ app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => 
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
     );
 
-    res.status(201).json(order);
+    // Decide whether the order fills right now.
+    //  - market order: fills at the live price
+    //  - limit buy at or above the live price / limit sell at or below it: fills at the live price
+    //  - otherwise: stays pending until the background matcher sees the price reach the limit
+    let fillAt: number | null = null;
+    if (orderType === 'market') {
+      fillAt = orderPrice;
+    } else if (livePrice !== null) {
+      const priceReached = type === 'buy' ? livePrice <= orderPrice : livePrice >= orderPrice;
+      if (priceReached) fillAt = livePrice;
+    }
+
+    let trade: Awaited<ReturnType<typeof fillOrder>> | null = null;
+    if (fillAt !== null) {
+      try {
+        trade = await fillOrder(order.id, fillAt, userId);
+      } catch (fillError) {
+        if (orderType === 'market') {
+          // A market order that can't fill is rejected, and its blocked funds are released
+          await cancelOrder(order.id, userId).catch((cancelError) =>
+            console.error('Could not cancel unfilled market order:', cancelError)
+          );
+          throw fillError;
+        }
+        // A limit order that couldn't fill right now just stays pending for the matcher
+        console.error('Immediate fill of limit order failed; leaving it pending:', fillError);
+      }
+    }
+
+    const finalOrder = trade ? await prisma.order.findUnique({ where: { id: order.id } }) : order;
+    res.status(201).json({ order: finalOrder, trade });
   } catch (error) {
     sendError(res, error, 'placing the order');
-  }
-});
-
-app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, res: Response) => {
-  try {
-    const userId = req.userId as string;
-    const rawOrderId = req.params.orderId;
-
-    if (!rawOrderId || Array.isArray(rawOrderId)) {
-      return res.status(400).json({ error: 'Order ID is required' });
-    }
-    const orderId: string = rawOrderId;
-
-    const trade = await prisma.$transaction(
-      async (tx) => {
-        const order = await tx.order.findUnique({
-          where: { id: orderId },
-          include: { instrument: true },
-        });
-
-        if (!order) throw new HttpError(404, 'Order not found');
-        if (order.userId !== userId) throw new HttpError(403, 'This order does not belong to you');
-
-        // Claim the order: only one request can flip pending -> executed,
-        // so a double-click or parallel call can't execute it twice.
-        const claimed = await tx.order.updateMany({
-          where: { id: orderId, status: 'pending' },
-          data: { status: 'executed' },
-        });
-        if (claimed.count === 0) {
-          throw new HttpError(400, 'Order is no longer pending');
-        }
-
-        const totalPrice = roundMoney(order.qty * Number(order.orderPrice));
-        const isPositionProduct = order.productType === 'MIS' || order.productType === 'NRML';
-
-        // Ownership check for sells (inside the transaction, so it can't go stale)
-        if (order.type === 'sell') {
-          if (isPositionProduct) {
-            const position = await tx.position.findFirst({
-              where: { userId, instrumentId: order.instrumentId, productType: order.productType },
-            });
-            if (!position || position.netQty < order.qty) {
-              throw new HttpError(400, 'Insufficient position quantity to sell');
-            }
-          } else {
-            const holding = await tx.holding.findFirst({
-              where: { userId, instrumentId: order.instrumentId },
-            });
-            if (!holding || holding.qty < order.qty) {
-              throw new HttpError(400, 'Insufficient holdings to sell this quantity');
-            }
-          }
-        }
-
-        const createdTrade = await tx.trade.create({
-          data: {
-            userId,
-            instrumentId: order.instrumentId,
-            orderId: order.id,
-            pricePerShare: order.orderPrice,
-            sharesQty: order.qty,
-            totalPrice,
-            brokerage: BROKERAGE_FLAT_FEE,
-          },
-        });
-
-        // Buys were already paid at placement; sells credit proceeds now. Fee is charged on both.
-        const delta = (order.type === 'sell' ? totalPrice : 0) - BROKERAGE_FLAT_FEE;
-        const updatedBalance = await tx.balance.update({
-          where: { userId },
-          data: { availableBalance: { increment: delta } },
-        });
-        const finalBalance = Number(updatedBalance.availableBalance);
-
-        if (finalBalance < 0) {
-          // Throwing rolls the whole transaction back, including the trade and the claimed order
-          throw new HttpError(400, 'Insufficient balance to cover brokerage');
-        }
-
-        if (order.type === 'sell') {
-          await recordTransaction(
-            tx,
-            userId,
-            'trade_credit',
-            `Credited sale proceeds for SELL order on ${order.instrument.symbol} (Qty: ${order.qty})`,
-            totalPrice,
-            roundMoney(finalBalance + BROKERAGE_FLAT_FEE)
-          );
-        }
-        await recordTransaction(
-          tx,
-          userId,
-          'charges',
-          `Brokerage charged on ${order.type.toUpperCase()} order execution for ${order.instrument.symbol}`,
-          -BROKERAGE_FLAT_FEE,
-          finalBalance
-        );
-
-        if (isPositionProduct) {
-          const existingPosition = await tx.position.findFirst({
-            where: { userId, instrumentId: order.instrumentId, productType: order.productType },
-          });
-
-          if (order.type === 'buy') {
-            if (existingPosition) {
-              const newNetQty = existingPosition.netQty + order.qty;
-              const newAvgPrice =
-                (Number(existingPosition.avgPrice) * existingPosition.netQty + totalPrice) / newNetQty;
-
-              await tx.position.update({
-                where: { id: existingPosition.id },
-                data: { netQty: newNetQty, avgPrice: newAvgPrice },
-              });
-            } else {
-              await tx.position.create({
-                data: {
-                  userId,
-                  instrumentId: order.instrumentId,
-                  productType: order.productType,
-                  netQty: order.qty,
-                  avgPrice: order.orderPrice,
-                },
-              });
-            }
-          } else {
-            const position = existingPosition!;
-            const realizedPnl = (Number(order.orderPrice) - Number(position.avgPrice)) * order.qty;
-            const newNetQty = position.netQty - order.qty;
-
-            if (newNetQty === 0) {
-              await tx.position.delete({ where: { id: position.id } });
-            } else {
-              await tx.position.update({
-                where: { id: position.id },
-                data: {
-                  netQty: newNetQty,
-                  realizedPnl: Number(position.realizedPnl) + realizedPnl,
-                },
-              });
-            }
-          }
-        } else {
-          const existingHolding = await tx.holding.findFirst({
-            where: { userId, instrumentId: order.instrumentId },
-          });
-
-          if (order.type === 'buy') {
-            if (existingHolding) {
-              await tx.holding.update({
-                where: { id: existingHolding.id },
-                data: {
-                  qty: existingHolding.qty + order.qty,
-                  investedValue: Number(existingHolding.investedValue) + totalPrice,
-                },
-              });
-            } else {
-              await tx.holding.create({
-                data: {
-                  userId,
-                  instrumentId: order.instrumentId,
-                  qty: order.qty,
-                  investedValue: totalPrice,
-                },
-              });
-            }
-          } else {
-            const holding = existingHolding!;
-            const remainingQty = holding.qty - order.qty;
-
-            if (remainingQty === 0) {
-              await tx.holding.delete({ where: { id: holding.id } });
-            } else {
-              const avgPricePerShare = Number(holding.investedValue) / holding.qty;
-              await tx.holding.update({
-                where: { id: holding.id },
-                data: {
-                  qty: remainingQty,
-                  investedValue: remainingQty * avgPricePerShare,
-                },
-              });
-            }
-          }
-        }
-
-        return createdTrade;
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
-    );
-
-    res.status(201).json({ message: 'Order executed successfully', trade });
-  } catch (error) {
-    sendError(res, error, 'executing the order');
   }
 });
 
@@ -556,49 +399,8 @@ app.post('/api/orders/:orderId/cancel', requireAuth, async (req: AuthRequest, re
     if (!rawOrderId || Array.isArray(rawOrderId)) {
       return res.status(400).json({ error: 'Order ID is required' });
     }
-    const orderId: string = rawOrderId;
 
-    const result = await prisma.$transaction(
-      async (tx) => {
-        const order = await tx.order.findUnique({
-          where: { id: orderId },
-          include: { instrument: true },
-        });
-
-        if (!order) throw new HttpError(404, 'Order not found');
-        if (order.userId !== userId) throw new HttpError(403, 'This order does not belong to you');
-
-        const claimed = await tx.order.updateMany({
-          where: { id: orderId, status: 'pending' },
-          data: { status: 'cancelled' },
-        });
-        if (claimed.count === 0) {
-          throw new HttpError(400, `Order is already ${order.status}`);
-        }
-
-        // Buys blocked cash at placement, so give it back. Sells never blocked cash.
-        if (order.type === 'buy') {
-          const refund = roundMoney(order.qty * Number(order.orderPrice));
-          const updatedBalance = await tx.balance.update({
-            where: { userId },
-            data: { availableBalance: { increment: refund } },
-          });
-
-          await recordTransaction(
-            tx,
-            userId,
-            'trade_credit',
-            `Released blocked funds for cancelled BUY order on ${order.instrument.symbol} (Qty: ${order.qty})`,
-            refund,
-            Number(updatedBalance.availableBalance)
-          );
-        }
-
-        return { id: order.id, status: 'cancelled' };
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
-    );
-
+    const result = await cancelOrder(rawOrderId, userId);
     res.json({ message: 'Order cancelled', order: result });
   } catch (error) {
     sendError(res, error, 'cancelling the order');
@@ -1024,6 +826,7 @@ const io = new Server(httpServer, {
 
 connectToFinnhub(io);
 startYahooFinancePolling(io, ['RELIANCE.NS']);
+startOrderMatcher();
 
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
