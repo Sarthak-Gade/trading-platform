@@ -3,15 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import PriceChart from './PriceChart';
 import OrderForm from './OrderForm';
-import Holdings from './Holdings';
-import Positions from './Positions';
 import Alerts from './Alerts';
 import OrderBook from './OrderBook';
 import TradeBook from './TradeBook';
 import Watchlist from './Watchlist';
 import Profile from './Profile';
 import BankAccounts from './BankAccounts';
-import Wallet from './Wallet';
 
 interface Balance {
   availableBalance: string;
@@ -67,15 +64,7 @@ function Dashboard() {
       <div className="card">
         <OrderForm onOrderPlaced={fetchBalance} />
       </div>
-
-      <div className="card">
-        <Holdings />
-      </div>
-
-      <div className="card">
-        <Positions />
-      </div>
-
+      
       <div className="card">
         <Alerts />
       </div>
@@ -92,9 +81,7 @@ function Dashboard() {
         <TradeBook />
       </div>
 
-      <div className="card full-width">
-        <Wallet onBalanceChanged={fetchBalance} />
-      </div>
+     
 
       <div className="card full-width">
         <h2>Live Price Chart — RELIANCE (NSE)</h2>
