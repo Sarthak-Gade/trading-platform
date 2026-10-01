@@ -12,6 +12,7 @@ import { startYahooFinancePolling } from './lib/yahooFinance';
 import { recordTransaction } from './lib/ledger';
 import { Prisma } from '@prisma/client';
 import { BROKERAGE_FLAT_FEE, HttpError, roundMoney, sendError, validateOrderInput } from './lib/trading';
+import { getQuote } from './lib/quotes';
 
 const app = express();
 app.use(cors());
@@ -268,7 +269,22 @@ app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => 
     if (!parsed.ok) {
       return res.status(400).json({ error: parsed.error });
     }
-    const { instrumentId, type, orderType, productType, qty, orderPrice, validity } = parsed.value;
+    const { instrumentId, type, orderType, productType, qty, orderPrice: requestedPrice, validity } = parsed.value;
+
+    // Market orders are priced by the server from the live quote, never from what the client sends.
+    // This network call is done before the database transaction so a slow quote can't hold it open.
+    let orderPrice: number;
+    if (orderType === 'market') {
+      const quoteInstrument = await prisma.instrument.findUnique({ where: { id: instrumentId } });
+      if (!quoteInstrument) {
+        return res.status(404).json({ error: 'Instrument not found' });
+      }
+      const quote = await getQuote(quoteInstrument.symbol, quoteInstrument.exchange);
+      orderPrice = roundMoney(quote.price);
+    } else {
+      // validateOrderInput guarantees limit orders carry a price
+      orderPrice = requestedPrice as number;
+    }
 
     const order = await prisma.$transaction(
       async (tx) => {
@@ -893,6 +909,26 @@ app.get('/api/instruments/search', requireAuth, async (req: AuthRequest, res: Re
   } catch (error) {
     console.error('Error searching instruments:', error);
     res.status(500).json({ error: 'Something went wrong searching instruments' });
+  }
+});
+
+app.get('/api/instruments/:instrumentId/quote', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const rawInstrumentId = req.params.instrumentId;
+
+    if (!rawInstrumentId || Array.isArray(rawInstrumentId)) {
+      return res.status(400).json({ error: 'Instrument ID is required' });
+    }
+
+    const instrument = await prisma.instrument.findUnique({ where: { id: rawInstrumentId } });
+    if (!instrument) {
+      return res.status(404).json({ error: 'Instrument not found' });
+    }
+
+    const quote = await getQuote(instrument.symbol, instrument.exchange);
+    res.json(quote);
+  } catch (error) {
+    sendError(res, error, 'fetching the quote');
   }
 });
 

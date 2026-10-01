@@ -45,7 +45,8 @@ export interface ValidOrder {
   orderType: string;
   productType: string;
   qty: number;
-  orderPrice: number;
+  // Only set for limit orders. Market orders are priced by the server from the live quote.
+  orderPrice: number | null;
   validity: string;
 }
 
@@ -75,8 +76,12 @@ export function validateOrderInput(
   if (typeof qty !== 'number' || !Number.isInteger(qty) || qty <= 0 || qty > MAX_QTY) {
     return { ok: false, error: `qty must be a whole number between 1 and ${MAX_QTY}` };
   }
-  if (typeof orderPrice !== 'number' || !Number.isFinite(orderPrice) || orderPrice <= 0 || orderPrice > MAX_PRICE) {
-    return { ok: false, error: 'orderPrice must be a positive number' };
+  // Limit orders must carry a price. For market orders any price sent is ignored,
+  // but if one is sent it still has to be sane.
+  if (orderType === 'limit' || orderPrice !== undefined) {
+    if (typeof orderPrice !== 'number' || !Number.isFinite(orderPrice) || orderPrice <= 0 || orderPrice > MAX_PRICE) {
+      return { ok: false, error: 'orderPrice must be a positive number' };
+    }
   }
 
   return {
@@ -87,7 +92,7 @@ export function validateOrderInput(
       orderType,
       productType,
       qty,
-      orderPrice: roundMoney(orderPrice),
+      orderPrice: typeof orderPrice === 'number' ? roundMoney(orderPrice) : null,
       validity,
     },
   };
