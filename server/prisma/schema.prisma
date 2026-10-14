@@ -116,6 +116,12 @@ model Trade {
   sharesQty     Int
   totalPrice    Decimal
   brokerage     Decimal  @default(0)
+  // Regulatory charges, added with the Indian charges engine. Older trades keep 0 here.
+  stt             Decimal @default(0)
+  exchangeCharges Decimal @default(0)
+  sebiCharges     Decimal @default(0)
+  gst             Decimal @default(0)
+  stampDuty       Decimal @default(0)
   executedAt    DateTime @default(now())
 
   user         User       @relation(fields: [userId], references: [id])

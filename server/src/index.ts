@@ -11,7 +11,8 @@ import { startNSEPolling } from './lib/nseIndia';
 import { startYahooFinancePolling } from './lib/yahooFinance';
 import { recordTransaction } from './lib/ledger';
 import { Prisma } from '@prisma/client';
-import { BROKERAGE_FLAT_FEE, HttpError, roundMoney, sendError, validateOrderInput } from './lib/trading';
+import { HttpError, roundMoney, sendError, validateOrderInput } from './lib/trading';
+import { calculateCharges } from './lib/charges';
 import { getQuote } from './lib/quotes';
 
 const app = express();
@@ -286,6 +287,9 @@ app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => 
       orderPrice = requestedPrice as number;
     }
 
+    // Charges are taken when the order fills, so a buy must have room for them on top of its value
+    const estimatedCharges = calculateCharges({ direction: type, quantity: qty, price: orderPrice, productType });
+
     const order = await prisma.$transaction(
       async (tx) => {
         const instrument = await tx.instrument.findUnique({ where: { id: instrumentId } });
@@ -298,9 +302,9 @@ app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => 
 
           // Atomic check-and-block: the WHERE clause fails if funds are short,
           // so two parallel orders can never spend the same money.
-          // We require room for the brokerage fee too, which is charged at execution.
+          // We require room for the charges too, which are taken at execution.
           const blocked = await tx.balance.updateMany({
-            where: { userId, availableBalance: { gte: orderValue + BROKERAGE_FLAT_FEE } },
+            where: { userId, availableBalance: { gte: roundMoney(orderValue + estimatedCharges.totalCharges) } },
             data: { availableBalance: { decrement: orderValue } },
           });
           if (blocked.count === 0) {
@@ -407,6 +411,14 @@ app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, r
           }
         }
 
+        // Charges for this trade at the price it actually fills at
+        const charges = calculateCharges({
+          direction: order.type === 'sell' ? 'sell' : 'buy',
+          quantity: order.qty,
+          price: Number(order.orderPrice),
+          productType: order.productType,
+        });
+
         const createdTrade = await tx.trade.create({
           data: {
             userId,
@@ -415,12 +427,17 @@ app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, r
             pricePerShare: order.orderPrice,
             sharesQty: order.qty,
             totalPrice,
-            brokerage: BROKERAGE_FLAT_FEE,
+            brokerage: charges.brokerage,
+            stt: charges.stt,
+            exchangeCharges: charges.exchangeCharges,
+            sebiCharges: charges.sebiCharges,
+            gst: charges.gst,
+            stampDuty: charges.stampDuty,
           },
         });
 
-        // Buys were already paid at placement; sells credit proceeds now. Fee is charged on both.
-        const delta = (order.type === 'sell' ? totalPrice : 0) - BROKERAGE_FLAT_FEE;
+        // Buys were already paid at placement; sells credit proceeds now. Charges apply to both.
+        const delta = roundMoney((order.type === 'sell' ? totalPrice : 0) - charges.totalCharges);
         const updatedBalance = await tx.balance.update({
           where: { userId },
           data: { availableBalance: { increment: delta } },
@@ -429,7 +446,7 @@ app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, r
 
         if (finalBalance < 0) {
           // Throwing rolls the whole transaction back, including the trade and the claimed order
-          throw new HttpError(400, 'Insufficient balance to cover brokerage');
+          throw new HttpError(400, 'Insufficient balance to cover charges');
         }
 
         if (order.type === 'sell') {
@@ -439,15 +456,18 @@ app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, r
             'trade_credit',
             `Credited sale proceeds for SELL order on ${order.instrument.symbol} (Qty: ${order.qty})`,
             totalPrice,
-            roundMoney(finalBalance + BROKERAGE_FLAT_FEE)
+            roundMoney(finalBalance + charges.totalCharges)
           );
         }
         await recordTransaction(
           tx,
           userId,
           'charges',
-          `Brokerage charged on ${order.type.toUpperCase()} order execution for ${order.instrument.symbol}`,
-          -BROKERAGE_FLAT_FEE,
+          `Charges on ${order.type.toUpperCase()} ${order.instrument.symbol} x${order.qty}: ` +
+            `brokerage ${charges.brokerage.toFixed(2)}, STT ${charges.stt.toFixed(2)}, ` +
+            `exchange ${charges.exchangeCharges.toFixed(2)}, SEBI ${charges.sebiCharges.toFixed(2)}, ` +
+            `GST ${charges.gst.toFixed(2)}, stamp duty ${charges.stampDuty.toFixed(2)}`,
+          -charges.totalCharges,
           finalBalance
         );
 
@@ -910,6 +930,28 @@ app.get('/api/instruments/search', requireAuth, async (req: AuthRequest, res: Re
     console.error('Error searching instruments:', error);
     res.status(500).json({ error: 'Something went wrong searching instruments' });
   }
+});
+
+app.get('/api/charges/estimate', requireAuth, (req: AuthRequest, res: Response) => {
+  const direction = req.query.direction;
+  const productType = typeof req.query.productType === 'string' ? req.query.productType : 'CNC';
+  const quantity = Number(req.query.quantity);
+  const price = Number(req.query.price);
+
+  if (direction !== 'buy' && direction !== 'sell') {
+    return res.status(400).json({ error: 'direction must be "buy" or "sell"' });
+  }
+  if (!['CNC', 'MIS', 'NRML'].includes(productType)) {
+    return res.status(400).json({ error: 'productType must be one of: CNC, MIS, NRML' });
+  }
+  if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 100000) {
+    return res.status(400).json({ error: 'quantity must be a whole number between 1 and 100000' });
+  }
+  if (!Number.isFinite(price) || price <= 0 || price > 10000000) {
+    return res.status(400).json({ error: 'price must be a positive number' });
+  }
+
+  res.json(calculateCharges({ direction, quantity, price, productType }));
 });
 
 app.get('/api/instruments/:instrumentId/quote', requireAuth, async (req: AuthRequest, res: Response) => {

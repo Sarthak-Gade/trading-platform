@@ -14,7 +14,17 @@ interface Quote {
   marketState: string | null;
 }
 
-const BROKERAGE_FLAT_FEE = 20; // keep in sync with the server
+interface Charges {
+  tradeValue: number;
+  brokerage: number;
+  stt: number;
+  exchangeCharges: number;
+  sebiCharges: number;
+  gst: number;
+  stampDuty: number;
+  totalCharges: number;
+}
+
 const QUOTE_REFRESH_MS = 5000;
 
 function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
@@ -30,6 +40,7 @@ function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoteError, setQuoteError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [chargesResult, setChargesResult] = useState<{ key: string; data: Charges } | null>(null);
 
   // Load the live price when a stock is selected, then refresh it every few seconds
   useEffect(() => {
@@ -73,7 +84,34 @@ function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
   // The price this order would use: live price for market, typed price for limit
   const effectivePrice = orderType === 'market' ? (quote?.price ?? null) : Number(limitPrice);
   const priceIsValid = effectivePrice !== null && Number.isFinite(effectivePrice) && effectivePrice > 0;
-  const estimatedValue = priceIsValid ? effectivePrice * qty : null;
+  // A charges result is only shown while it still matches the current inputs
+  const chargesKey = `${type}|${productType}|${qty}|${effectivePrice}`;
+  const charges =
+    selectedInstrument && priceIsValid && chargesResult?.key === chargesKey ? chargesResult.data : null;
+
+  // Ask the server for the exact charges, so the formula lives in one place only
+  useEffect(() => {
+    if (!selectedInstrument || !priceIsValid || effectivePrice === null) return;
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      apiFetch(
+        `/api/charges/estimate?direction=${type}&productType=${productType}&quantity=${qty}&price=${effectivePrice}`,
+        token
+      )
+        .then((data: Charges) => {
+          if (!cancelled) setChargesResult({ key: chargesKey, data });
+        })
+        .catch(() => {
+          // No breakdown if the estimate fails; the order itself is unaffected
+        });
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [selectedInstrument, type, productType, qty, effectivePrice, priceIsValid, chargesKey, token]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -221,10 +259,26 @@ function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
           )}
         </div>
 
-        {estimatedValue !== null && (
-          <p style={{ fontSize: '0.85rem', color: '#9098ac', margin: '0 0 0.75rem' }}>
-            Approx. value: ₹{estimatedValue.toFixed(2)} + ₹{BROKERAGE_FLAT_FEE} brokerage
-          </p>
+        {charges && (
+          <div style={{ fontSize: '0.85rem', color: '#9098ac', margin: '0 0 0.75rem' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+              <tbody>
+                <ChargeRow label="Trade value" value={charges.tradeValue} />
+                <ChargeRow label="Brokerage" value={charges.brokerage} />
+                <ChargeRow label="STT" value={charges.stt} />
+                <ChargeRow label="Exchange charges" value={charges.exchangeCharges} />
+                <ChargeRow label="SEBI fee" value={charges.sebiCharges} />
+                <ChargeRow label="GST" value={charges.gst} />
+                <ChargeRow label="Stamp duty" value={charges.stampDuty} />
+                <ChargeRow label="Total charges" value={charges.totalCharges} bold />
+                <ChargeRow
+                  label={type === 'buy' ? 'You pay about' : 'You receive about'}
+                  value={type === 'buy' ? charges.tradeValue + charges.totalCharges : charges.tradeValue - charges.totalCharges}
+                  bold
+                />
+              </tbody>
+            </table>
+          </div>
         )}
 
         {error && <p style={{ color: 'red' }}>{error}</p>}
@@ -235,6 +289,15 @@ function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
         </button>
       </form>
     </div>
+  );
+}
+
+function ChargeRow({ label, value, bold }: { label: string; value: number; bold?: boolean }) {
+  return (
+    <tr style={bold ? { fontWeight: 700, color: '#e4e6eb' } : undefined}>
+      <td style={{ padding: '2px 0' }}>{label}</td>
+      <td style={{ padding: '2px 0', textAlign: 'right' }}>₹{value.toFixed(2)}</td>
+    </tr>
   );
 }
 

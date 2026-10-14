@@ -8,6 +8,11 @@ interface Trade {
   sharesQty: number;
   totalPrice: string;
   brokerage: string;
+  stt: string;
+  exchangeCharges: string;
+  sebiCharges: string;
+  gst: string;
+  stampDuty: string;
   executedAt: string;
   instrument: { symbol: string };
 }
@@ -37,7 +42,7 @@ function TradeBook() {
               <th style={cellStyle}>Symbol</th>
               <th style={cellStyle}>Qty</th>
               <th style={cellStyle}>Price/Share</th>
-              <th style={cellStyle}>Brokerage</th>
+              <th style={cellStyle}>Charges</th>
               <th style={cellStyle}>Total</th>
               <th style={cellStyle}>Executed At</th>
             </tr>
@@ -48,7 +53,9 @@ function TradeBook() {
                 <td style={cellStyle}>{t.instrument.symbol}</td>
                 <td style={cellStyle}>{t.sharesQty}</td>
                 <td style={cellStyle}>₹{t.pricePerShare}</td>
-                <td style={cellStyle}>₹{t.brokerage}</td>
+                <td style={cellStyle} title={chargesBreakdown(t)}>
+                  ₹{totalCharges(t).toFixed(2)}
+                </td>
                 <td style={cellStyle}>₹{t.totalPrice}</td>
                 <td style={cellStyle}>{new Date(t.executedAt).toLocaleString()}</td>
               </tr>
@@ -57,6 +64,21 @@ function TradeBook() {
         </table>
       )}
     </div>
+  );
+}
+
+// Older trades only have a brokerage value; the other charge columns are 0 for them
+function totalCharges(t: Trade): number {
+  return (
+    Number(t.brokerage) + Number(t.stt) + Number(t.exchangeCharges) +
+    Number(t.sebiCharges) + Number(t.gst) + Number(t.stampDuty)
+  );
+}
+
+function chargesBreakdown(t: Trade): string {
+  return (
+    `Brokerage ₹${t.brokerage}, STT ₹${t.stt}, Exchange ₹${t.exchangeCharges}, ` +
+    `SEBI ₹${t.sebiCharges}, GST ₹${t.gst}, Stamp duty ₹${t.stampDuty}`
   );
 }
 

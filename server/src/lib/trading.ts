@@ -1,8 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { Response } from 'express';
 
-export const BROKERAGE_FLAT_FEE = 20;
-
 const ORDER_TYPES = ['market', 'limit'];
 const PRODUCT_TYPES = ['CNC', 'MIS', 'NRML'];
 const VALIDITIES = ['DAY', 'IOC'];
