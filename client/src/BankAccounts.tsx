@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from './context/AuthContext';
 import { apiFetch } from './api';
+import Icon from './Icon';
 
 interface Bank {
   id: string;
@@ -12,94 +13,96 @@ interface Bank {
 
 function BankAccounts() {
   const { token } = useAuth();
-  const [banks, setBanks] = useState<Bank[]>([]);
+  const [banks, setBanks] = useState<Bank[] | null>(null);
   const [accountNumber, setAccountNumber] = useState('');
   const [ifscCode, setIfscCode] = useState('');
   const [bankBranch, setBankBranch] = useState('');
   const [error, setError] = useState('');
 
-  const fetchBanks = () => {
+  const load = useCallback(() => {
     apiFetch('/api/me/banks', token)
-      .then((data) => setBanks(data))
+      .then((data: Bank[]) => setBanks(data))
       .catch(() => setError('Could not load bank accounts'));
-  };
-
-  useEffect(() => {
-    fetchBanks();
   }, [token]);
 
-  const handleAdd = async (e: React.FormEvent) => {
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const add = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-
     try {
       await apiFetch('/api/me/banks', token, {
         method: 'POST',
-        body: JSON.stringify({ accountNumber, ifscCode, bankBranch }),
+        body: JSON.stringify({ accountNumber, ifscCode: ifscCode.toUpperCase(), bankBranch }),
       });
       setAccountNumber('');
       setIfscCode('');
       setBankBranch('');
-      fetchBanks();
+      load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not add bank account');
+      setError(err instanceof Error ? err.message : 'Could not add the bank account');
     }
   };
 
-  const handleDelete = async (bankId: string) => {
+  const remove = async (id: string) => {
     try {
-      await apiFetch(`/api/me/banks/${bankId}`, token, { method: 'DELETE' });
-      fetchBanks();
+      await apiFetch(`/api/me/banks/${id}`, token, { method: 'DELETE' });
+      load();
     } catch {
-      setError('Could not remove bank account');
+      setError('Could not remove the bank account');
     }
   };
 
   return (
-    <div style={{ marginBottom: '2rem' }}>
-      <h2>Linked Bank Accounts</h2>
+    <div className="card stack">
+      <div className="card-head" style={{ marginBottom: 0 }}>
+        <span className="card-title">Linked bank accounts</span>
+      </div>
 
-      <form onSubmit={handleAdd} style={{ marginBottom: '1rem' }}>
-        <input
-          type="text"
-          placeholder="Account number"
-          value={accountNumber}
-          onChange={(e) => setAccountNumber(e.target.value)}
-          required
-          style={{ padding: '0.4rem', marginRight: '0.5rem' }}
-        />
-        <input
-          type="text"
-          placeholder="IFSC code"
-          value={ifscCode}
-          onChange={(e) => setIfscCode(e.target.value)}
-          required
-          style={{ padding: '0.4rem', marginRight: '0.5rem' }}
-        />
-        <input
-          type="text"
-          placeholder="Branch"
-          value={bankBranch}
-          onChange={(e) => setBankBranch(e.target.value)}
-          required
-          style={{ padding: '0.4rem', marginRight: '0.5rem' }}
-        />
-        <button type="submit">Add Bank</button>
+      <form className="inline-form" onSubmit={add}>
+        <div className="field">
+          <label className="label" htmlFor="acc">Account number</label>
+          <input id="acc" className="input" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label className="label" htmlFor="ifsc">IFSC</label>
+          <input id="ifsc" className="input" value={ifscCode} onChange={(e) => setIfscCode(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label className="label" htmlFor="branch">Branch</label>
+          <input id="branch" className="input" value={bankBranch} onChange={(e) => setBankBranch(e.target.value)} required />
+        </div>
+        <button type="submit" className="btn btn-primary">
+          <Icon name="plus" size={16} /> Add
+        </button>
       </form>
 
-      {error && <p style={{ color: 'red' }}>{error}</p>}
+      {error && (
+        <div className="notice notice-error" role="alert">
+          <Icon name="alert-circle" size={16} /> {error}
+        </div>
+      )}
 
-      {banks.length === 0 ? (
-        <p>No bank accounts linked.</p>
+      {banks && banks.length === 0 ? (
+        <div className="empty">
+          <Icon name="bank" size={32} />
+          No bank account linked yet.
+        </div>
       ) : (
-        <ul>
-          {banks.map((b) => (
-            <li key={b.id}>
-              {b.bankBranch} — A/C ****{b.accountNumber.slice(-4)} — {b.ifscCode} —{' '}
-              <span style={{ color: b.status === 'verified' ? 'green' : '#b8860b', fontWeight: 'bold' }}>
-                {b.status}
-              </span>{' '}
-              <button onClick={() => handleDelete(b.id)}>Remove</button>
+        <ul className="list">
+          {(banks ?? []).map((b) => (
+            <li key={b.id} className="list-item">
+              <span className="stat-icon blue" style={{ width: 36, height: 36 }}><Icon name="bank" size={18} /></span>
+              <div className="list-main">
+                <strong>{b.bankBranch}</strong>
+                <small>A/C ••••{b.accountNumber.slice(-4)} · {b.ifscCode}</small>
+              </div>
+              <span className={`badge ${b.status === 'verified' ? 'badge-green' : 'badge-amber'}`}>{b.status}</span>
+              <button type="button" className="icon-btn danger" aria-label="Remove bank account" onClick={() => remove(b.id)}>
+                <Icon name="trash" size={16} />
+              </button>
             </li>
           ))}
         </ul>

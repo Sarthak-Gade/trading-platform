@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from './context/AuthContext';
+import { useBalance } from './context/BalanceContext';
 import { apiFetch } from './api';
+import { formatDateTime, inr } from './format';
+import Icon from './Icon';
 
 interface Order {
   id: string;
@@ -11,71 +14,122 @@ interface Order {
   orderPrice: string;
   status: string;
   createdAt: string;
-  instrument: { symbol: string };
+  instrument: { symbol: string; name?: string };
 }
 
-function OrderBook() {
-  const { token } = useAuth();
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [error, setError] = useState('');
+const STATUS_BADGE: Record<string, string> = {
+  executed: 'badge-green',
+  pending: 'badge-amber',
+  cancelled: 'badge-gray',
+  rejected: 'badge-red',
+};
 
-  useEffect(() => {
+// `refreshKey` changes when an order is placed, so the list reloads straight away
+function OrderBook({ refreshKey }: { refreshKey: number }) {
+  const { token } = useAuth();
+  const { refresh: refreshBalance } = useBalance();
+  const [orders, setOrders] = useState<Order[] | null>(null);
+  const [error, setError] = useState('');
+  const [cancelling, setCancelling] = useState<string | null>(null);
+
+  const load = useCallback(() => {
     apiFetch('/api/me/orders', token)
-      .then((data) => setOrders(data))
-      .catch(() => setError('Could not load order history'));
+      .then((data: Order[]) => {
+        setOrders(data);
+        setError('');
+      })
+      .catch(() => setError('Could not load orders'));
   }, [token]);
 
-  if (error) return <p style={{ color: 'red' }}>{error}</p>;
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 15000);
+    return () => clearInterval(timer);
+  }, [load, refreshKey]);
 
-  const statusColor = (status: string) => {
-    if (status === 'executed') return 'green';
-    if (status === 'pending') return '#b8860b';
-    return 'red';
+  const cancel = async (id: string) => {
+    setCancelling(id);
+    try {
+      await apiFetch(`/api/orders/${id}/cancel`, token, { method: 'POST' });
+      load();
+      refreshBalance();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not cancel the order');
+    } finally {
+      setCancelling(null);
+    }
   };
 
+  if (!orders && !error) return <div className="skeleton" style={{ width: '100%', height: 120 }} />;
+
   return (
-    <div style={{ marginBottom: '2rem' }}>
-      <h2>Order Book</h2>
-      {orders.length === 0 ? (
-        <p>No orders placed yet.</p>
-      ) : (
-        <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: '800px' }}>
-          <thead>
-            <tr>
-              <th style={cellStyle}>Symbol</th>
-              <th style={cellStyle}>Type</th>
-              <th style={cellStyle}>Product</th>
-              <th style={cellStyle}>Qty</th>
-              <th style={cellStyle}>Price</th>
-              <th style={cellStyle}>Status</th>
-              <th style={cellStyle}>Placed At</th>
-            </tr>
-          </thead>
-          <tbody>
-            {orders.map((o) => (
-              <tr key={o.id}>
-                <td style={cellStyle}>{o.instrument.symbol}</td>
-                <td style={{ ...cellStyle, textTransform: 'capitalize' }}>{o.type}</td>
-                <td style={cellStyle}>{o.productType}</td>
-                <td style={cellStyle}>{o.qty}</td>
-                <td style={cellStyle}>₹{o.orderPrice}</td>
-                <td style={{ ...cellStyle, color: statusColor(o.status), fontWeight: 'bold' }}>
-                  {o.status}
-                </td>
-                <td style={cellStyle}>{new Date(o.createdAt).toLocaleString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <>
+      {error && (
+        <div className="notice notice-error" style={{ marginBottom: 12 }}>
+          <Icon name="alert-circle" size={16} /> {error}
+        </div>
       )}
-    </div>
+      {orders && orders.length === 0 ? (
+        <div className="empty">
+          <Icon name="inbox" size={32} />
+          No orders yet. Place your first order from the ticket above.
+        </div>
+      ) : (
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Stock</th>
+                <th>Side</th>
+                <th>Product</th>
+                <th className="num">Qty</th>
+                <th className="num">Price</th>
+                <th>Status</th>
+                <th>Placed</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {(orders ?? []).map((o) => (
+                <tr key={o.id}>
+                  <td>
+                    <div className="sym">
+                      <span className="symbol-chip">{o.instrument.symbol.slice(0, 2)}</span>
+                      <strong>{o.instrument.symbol}</strong>
+                    </div>
+                  </td>
+                  <td className={o.type === 'buy' ? 'up' : 'down'} style={{ fontWeight: 700, textTransform: 'capitalize' }}>
+                    {o.type}
+                  </td>
+                  <td>
+                    {o.productType} · <span className="muted">{o.orderType}</span>
+                  </td>
+                  <td className="num">{o.qty}</td>
+                  <td className="num">{inr(Number(o.orderPrice))}</td>
+                  <td>
+                    <span className={`badge ${STATUS_BADGE[o.status] ?? 'badge-gray'}`}>{o.status}</span>
+                  </td>
+                  <td className="muted nowrap">{formatDateTime(o.createdAt)}</td>
+                  <td className="num">
+                    {o.status === 'pending' && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        disabled={cancelling === o.id}
+                        onClick={() => cancel(o.id)}
+                      >
+                        {cancelling === o.id ? 'Cancelling…' : 'Cancel'}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
   );
 }
-
-const cellStyle: React.CSSProperties = {
-  border: '1px solid #ccc',
-  padding: '0.5rem',
-  textAlign: 'left',
-};
 
 export default OrderBook;

@@ -2,38 +2,44 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
-import Sidebar from './Sidebar';
+import { BalanceProvider } from './context/BalanceContext';
+import Layout from './Layout';
+import ProtectedRoute from './ProtectedRoute';
+import AdminRoute from './AdminRoute';
 import Login from './Login';
 import Signup from './Signup';
 import Dashboard from './Dashboard';
-import Admin from './Admin';
 import Portfolio from './Portfolio';
 import WalletPage from './WalletPage';
+import ProfilePage from './ProfilePage';
+import Admin from './Admin';
 import './index.css';
-
-function Layout({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex' }}>
-      <Sidebar />
-      <div style={{ flex: 1 }}>{children}</div>
-    </div>
-  );
-}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AuthProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
-          <Route path="/dashboard" element={<Layout><Dashboard /></Layout>} />
-          <Route path="/portfolio" element={<Layout><Portfolio /></Layout>} />
-          <Route path="/wallet" element={<Layout><WalletPage /></Layout>} />
-          <Route path="/admin" element={<Layout><Admin /></Layout>} />
-          <Route path="/" element={<Navigate to="/dashboard" />} />
-        </Routes>
-      </BrowserRouter>
+      <BalanceProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/signup" element={<Signup />} />
+
+            <Route element={<ProtectedRoute />}>
+              <Route element={<Layout />}>
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/portfolio" element={<Portfolio />} />
+                <Route path="/wallet" element={<WalletPage />} />
+                <Route path="/profile" element={<ProfilePage />} />
+                <Route element={<AdminRoute />}>
+                  <Route path="/admin" element={<Admin />} />
+                </Route>
+              </Route>
+            </Route>
+
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </BalanceProvider>
     </AuthProvider>
   </StrictMode>
 );

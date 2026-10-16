@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { apiFetch } from './api';
+import { formatDateTime, inr } from './format';
+import Icon, { type IconName } from './Icon';
 
 interface RecentTrade {
   id: string;
@@ -25,86 +26,93 @@ interface AdminStats {
 
 function Admin() {
   const { token } = useAuth();
-  const navigate = useNavigate();
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
     apiFetch('/api/admin/stats', token)
-      .then((data) => setStats(data))
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : 'Access denied');
-        setTimeout(() => navigate('/dashboard'), 2000);
-      });
-  }, [token, navigate]);
+      .then(setStats)
+      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load admin stats'));
+  }, [token]);
 
-  if (error) {
-    return (
-      <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
-        <p style={{ color: 'red' }}>{error} — redirecting to dashboard...</p>
-      </div>
-    );
-  }
-
-  if (!stats) {
-    return <div style={{ padding: '2rem' }}>Loading admin dashboard...</div>;
-  }
+  const cards: { label: string; value: string | number; icon: IconName; color: string }[] = stats
+    ? [
+        { label: 'Users', value: stats.totalUsers, icon: 'users', color: 'blue' },
+        { label: 'Orders', value: stats.totalOrders, icon: 'list', color: 'purple' },
+        { label: 'Trades', value: stats.totalTrades, icon: 'repeat', color: 'green' },
+        { label: 'Pending orders', value: stats.pendingOrders, icon: 'clock', color: 'amber' },
+        { label: 'Executed orders', value: stats.executedOrders, icon: 'check-circle', color: 'green' },
+        { label: 'Trade volume', value: inr(Number(stats.totalTradeVolume)), icon: 'rupee', color: 'blue' },
+      ]
+    : [];
 
   return (
-    <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
-      <h1>Admin Dashboard</h1>
-
-      <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '2rem', flexWrap: 'wrap' }}>
-        <StatCard label="Total Users" value={stats.totalUsers} />
-        <StatCard label="Total Orders" value={stats.totalOrders} />
-        <StatCard label="Total Trades" value={stats.totalTrades} />
-        <StatCard label="Pending Orders" value={stats.pendingOrders} />
-        <StatCard label="Executed Orders" value={stats.executedOrders} />
-        <StatCard label="Total Trade Volume" value={`₹${stats.totalTradeVolume}`} />
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <h1>Admin</h1>
+          <p>Platform-wide activity.</p>
+        </div>
       </div>
 
-      <h2>Recent Trades (Platform-Wide)</h2>
-      <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: '800px' }}>
-        <thead>
-          <tr>
-            <th style={cellStyle}>User</th>
-            <th style={cellStyle}>Symbol</th>
-            <th style={cellStyle}>Qty</th>
-            <th style={cellStyle}>Price</th>
-            <th style={cellStyle}>Total</th>
-            <th style={cellStyle}>Executed At</th>
-          </tr>
-        </thead>
-        <tbody>
-          {stats.recentTrades.map((t) => (
-            <tr key={t.id}>
-              <td style={cellStyle}>{t.user.fullName}</td>
-              <td style={cellStyle}>{t.instrument.symbol}</td>
-              <td style={cellStyle}>{t.sharesQty}</td>
-              <td style={cellStyle}>₹{t.pricePerShare}</td>
-              <td style={cellStyle}>₹{t.totalPrice}</td>
-              <td style={cellStyle}>{new Date(t.executedAt).toLocaleString()}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {error && (
+        <div className="notice notice-error">
+          <Icon name="alert-circle" size={16} /> {error}
+        </div>
+      )}
+
+      {stats && (
+        <>
+          <div className="stats" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+            {cards.map((c) => (
+              <div key={c.label} className="card stat">
+                <div>
+                  <div className="stat-label">{c.label}</div>
+                  <div className="stat-value">{c.value}</div>
+                </div>
+                <span className={`stat-icon ${c.color}`}><Icon name={c.icon} size={20} /></span>
+              </div>
+            ))}
+          </div>
+
+          <div className="card card-flush">
+            <div className="card-head">
+              <span className="card-title">Recent trades</span>
+            </div>
+            <div className="table-wrap" style={{ paddingTop: 8 }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Stock</th>
+                    <th className="num">Qty</th>
+                    <th className="num">Price</th>
+                    <th className="num">Total</th>
+                    <th>Executed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.recentTrades.map((t) => (
+                    <tr key={t.id}>
+                      <td>
+                        <div className="strong">{t.user.fullName}</div>
+                        <div className="muted" style={{ fontSize: 12 }}>{t.user.email}</div>
+                      </td>
+                      <td>{t.instrument.symbol}</td>
+                      <td className="num">{t.sharesQty}</td>
+                      <td className="num">{inr(Number(t.pricePerShare))}</td>
+                      <td className="num">{inr(Number(t.totalPrice))}</td>
+                      <td className="muted nowrap">{formatDateTime(t.executedAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
-
-function StatCard({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div style={{ border: '1px solid #ccc', borderRadius: '8px', padding: '1rem', minWidth: '140px' }}>
-      <div style={{ fontSize: '0.85rem', color: '#666' }}>{label}</div>
-      <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{value}</div>
-    </div>
-  );
-}
-
-const cellStyle: React.CSSProperties = {
-  border: '1px solid #ccc',
-  padding: '0.5rem',
-  textAlign: 'left',
-};
 
 export default Admin;

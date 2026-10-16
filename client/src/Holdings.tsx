@@ -1,66 +1,78 @@
-import { useEffect, useState } from 'react';
-import { useAuth } from './context/AuthContext';
-import { apiFetch } from './api';
+import { inr, signedInr, signedPct, tone } from './format';
+import type { Quote } from './types';
+import Icon from './Icon';
 
-interface Holding {
+export interface Holding {
   id: string;
   qty: number;
   investedValue: string;
-  instrument: {
-    symbol: string;
-    name: string;
-    exchange: string;
-  };
+  instrument: { id: string; symbol: string; name: string };
 }
 
-function Holdings() {
-  const { token } = useAuth();
-  const [holdings, setHoldings] = useState<Holding[]>([]);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    apiFetch('/api/me/holdings', token)
-      .then((data) => setHoldings(data))
-      .catch(() => setError('Could not load holdings'));
-  }, [token]);
-
-  if (error) return <p style={{ color: 'red' }}>{error}</p>;
+function Holdings({ holdings, quotes }: { holdings: Holding[]; quotes: Record<string, Quote> }) {
+  if (holdings.length === 0) {
+    return (
+      <div className="empty">
+        <Icon name="briefcase" size={32} />
+        No holdings yet. Buy a stock with CNC (delivery) to see it here.
+      </div>
+    );
+  }
 
   return (
-    <div style={{ marginBottom: '2rem' }}>
-      <h2>Holdings</h2>
-      {holdings.length === 0 ? (
-        <p>No holdings yet.</p>
-      ) : (
-        <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: '600px' }}>
-          <thead>
-            <tr>
-              <th style={cellStyle}>Symbol</th>
-              <th style={cellStyle}>Qty</th>
-              <th style={cellStyle}>Invested Value</th>
-              <th style={cellStyle}>Avg Price</th>
-            </tr>
-          </thead>
-          <tbody>
-            {holdings.map((h) => (
+    <div className="table-wrap">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Stock</th>
+            <th className="num">Qty</th>
+            <th className="num">Avg price</th>
+            <th className="num">LTP</th>
+            <th className="num">Invested</th>
+            <th className="num">Current</th>
+            <th className="num">P&amp;L</th>
+          </tr>
+        </thead>
+        <tbody>
+          {holdings.map((h) => {
+            const invested = Number(h.investedValue);
+            const q = quotes[h.instrument.id];
+            const current = q ? q.price * h.qty : null;
+            const pnl = current !== null ? current - invested : null;
+            const pct = pnl !== null && invested > 0 ? (pnl / invested) * 100 : null;
+            return (
               <tr key={h.id}>
-                <td style={cellStyle}>{h.instrument.symbol}</td>
-                <td style={cellStyle}>{h.qty}</td>
-                <td style={cellStyle}>₹{h.investedValue}</td>
-                <td style={cellStyle}>₹{(Number(h.investedValue) / h.qty).toFixed(2)}</td>
+                <td>
+                  <div className="sym">
+                    <span className="symbol-chip">{h.instrument.symbol.slice(0, 2)}</span>
+                    <div>
+                      <strong>{h.instrument.symbol}</strong>
+                      <small>{h.instrument.name}</small>
+                    </div>
+                  </div>
+                </td>
+                <td className="num">{h.qty}</td>
+                <td className="num">{inr(invested / h.qty)}</td>
+                <td className="num">{q ? inr(q.price) : '—'}</td>
+                <td className="num">{inr(invested)}</td>
+                <td className="num">{current !== null ? inr(current) : '—'}</td>
+                <td className={`num ${tone(pnl)}`}>
+                  {pnl !== null ? (
+                    <>
+                      {signedInr(pnl)}
+                      {pct !== null && <div style={{ fontSize: 11.5 }}>{signedPct(pct)}</div>}
+                    </>
+                  ) : (
+                    '—'
+                  )}
+                </td>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
-
-const cellStyle: React.CSSProperties = {
-  border: '1px solid #ccc',
-  padding: '0.5rem',
-  textAlign: 'left',
-};
 
 export default Holdings;

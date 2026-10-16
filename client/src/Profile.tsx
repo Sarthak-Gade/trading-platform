@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from './context/AuthContext';
 import { apiFetch } from './api';
+import Icon from './Icon';
 
 interface Account {
   dob: string;
@@ -12,10 +13,13 @@ interface Account {
   uniqueClientCode: string;
 }
 
+const INCOME = ['0-5L', '5-10L', '10-25L', '25L+'];
+
 function Profile() {
   const { token } = useAuth();
   const [account, setAccount] = useState<Account | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
@@ -28,125 +32,132 @@ function Profile() {
 
   useEffect(() => {
     apiFetch('/api/me/account', token)
-      .then((data) => {
+      .then((data: Account) => {
         setAccount(data);
         setOccupation(data.occupation);
         setIncomeRange(data.incomeRange);
+        setLoaded(true);
       })
-      .catch(() => setNotFound(true));
+      .catch((err) => {
+        if (err instanceof Error && /not found/i.test(err.message)) setNotFound(true);
+        else setError(err instanceof Error ? err.message : 'Could not load your profile');
+        setLoaded(true);
+      });
   }, [token]);
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-
-    try {
-      const data = await apiFetch('/api/me/account', token, {
-        method: 'POST',
-        body: JSON.stringify({ dob, pan_no: panNo, gender, maritalStatus, occupation, incomeRange }),
-      });
-      setAccount(data);
-      setNotFound(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save account details');
-    }
-  };
-
-  const handleUpdate = async (e: React.FormEvent) => {
+  const save = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setMessage('');
-
     try {
-      const data = await apiFetch('/api/me/account', token, {
-        method: 'PATCH',
-        body: JSON.stringify({ occupation, incomeRange }),
+      const creating = notFound;
+      const data: Account = await apiFetch('/api/me/account', token, {
+        method: creating ? 'POST' : 'PATCH',
+        body: JSON.stringify(
+          creating
+            ? { dob, pan_no: panNo.toUpperCase(), gender, maritalStatus, occupation, incomeRange }
+            : { occupation, incomeRange }
+        ),
       });
       setAccount(data);
-      setMessage('Profile updated successfully');
+      setNotFound(false);
+      setMessage(creating ? 'KYC profile saved' : 'Profile updated');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not update account details');
+      setError(err instanceof Error ? err.message : 'Could not save your profile');
     }
   };
 
-  if (notFound) {
+  if (!loaded) {
     return (
-      <div style={{ marginBottom: '2rem', border: '1px solid #ccc', borderRadius: '8px', padding: '1rem', maxWidth: '400px' }}>
-        <h2>Complete Your KYC Profile</h2>
-        <form onSubmit={handleCreate}>
-          <div style={{ marginBottom: '0.75rem' }}>
-            <label>Date of Birth</label>
-            <input type="date" value={dob} onChange={(e) => setDob(e.target.value)} required style={{ width: '100%', padding: '0.4rem' }} />
-          </div>
-          <div style={{ marginBottom: '0.75rem' }}>
-            <label>PAN Number</label>
-            <input type="text" value={panNo} onChange={(e) => setPanNo(e.target.value)} required style={{ width: '100%', padding: '0.4rem' }} />
-          </div>
-          <div style={{ marginBottom: '0.75rem' }}>
-            <label>Gender</label>
-            <select value={gender} onChange={(e) => setGender(e.target.value)} style={{ width: '100%', padding: '0.4rem' }}>
-              <option>Male</option>
-              <option>Female</option>
-              <option>Other</option>
-            </select>
-          </div>
-          <div style={{ marginBottom: '0.75rem' }}>
-            <label>Marital Status</label>
-            <select value={maritalStatus} onChange={(e) => setMaritalStatus(e.target.value)} style={{ width: '100%', padding: '0.4rem' }}>
-              <option>Single</option>
-              <option>Married</option>
-            </select>
-          </div>
-          <div style={{ marginBottom: '0.75rem' }}>
-            <label>Occupation</label>
-            <input type="text" value={occupation} onChange={(e) => setOccupation(e.target.value)} required style={{ width: '100%', padding: '0.4rem' }} />
-          </div>
-          <div style={{ marginBottom: '0.75rem' }}>
-            <label>Income Range</label>
-            <select value={incomeRange} onChange={(e) => setIncomeRange(e.target.value)} style={{ width: '100%', padding: '0.4rem' }}>
-              <option value="0-5L">0-5L</option>
-              <option value="5-10L">5-10L</option>
-              <option value="10-25L">10-25L</option>
-              <option value="25L+">25L+</option>
-            </select>
-          </div>
-          {error && <p style={{ color: 'red' }}>{error}</p>}
-          <button type="submit">Save Profile</button>
-        </form>
+      <div className="card">
+        <div className="skeleton" style={{ width: '100%', height: 160 }} />
       </div>
     );
   }
 
-  if (!account) return <p>Loading profile...</p>;
-
   return (
-    <div style={{ marginBottom: '2rem', border: '1px solid #ccc', borderRadius: '8px', padding: '1rem', maxWidth: '400px' }}>
-      <h2>Profile</h2>
-      <p><strong>Client Code:</strong> {account.uniqueClientCode}</p>
-      <p><strong>PAN:</strong> {account.pan_no} <em>(locked)</em></p>
-      <p><strong>DOB:</strong> {new Date(account.dob).toLocaleDateString()} <em>(locked)</em></p>
-      <p><strong>Gender:</strong> {account.gender}</p>
-      <p><strong>Marital Status:</strong> {account.maritalStatus}</p>
+    <form className="card stack" onSubmit={save}>
+      <div className="card-head" style={{ marginBottom: 0 }}>
+        <span className="card-title">{notFound ? 'Complete your KYC' : 'KYC profile'}</span>
+        {account && <span className="badge badge-green">Client {account.uniqueClientCode}</span>}
+      </div>
 
-      <form onSubmit={handleUpdate}>
-        <div style={{ marginBottom: '0.75rem' }}>
-          <label>Occupation</label>
-          <input type="text" value={occupation} onChange={(e) => setOccupation(e.target.value)} style={{ width: '100%', padding: '0.4rem' }} />
+      {account && (
+        <div className="profile-facts">
+          <div className="fact"><small>PAN (locked)</small><span>{account.pan_no}</span></div>
+          <div className="fact"><small>Date of birth (locked)</small><span>{new Date(account.dob).toLocaleDateString('en-IN')}</span></div>
+          <div className="fact"><small>Gender</small><span>{account.gender}</span></div>
+          <div className="fact"><small>Marital status</small><span>{account.maritalStatus}</span></div>
         </div>
-        <div style={{ marginBottom: '0.75rem' }}>
-          <label>Income Range</label>
-          <select value={incomeRange} onChange={(e) => setIncomeRange(e.target.value)} style={{ width: '100%', padding: '0.4rem' }}>
-            <option value="0-5L">0-5L</option>
-            <option value="5-10L">5-10L</option>
-            <option value="10-25L">10-25L</option>
-            <option value="25L+">25L+</option>
+      )}
+
+      <div className="form-grid">
+        {notFound && (
+          <>
+            <div className="field">
+              <label className="label" htmlFor="dob">Date of birth</label>
+              <input id="dob" className="input" type="date" value={dob} onChange={(e) => setDob(e.target.value)} required />
+            </div>
+            <div className="field">
+              <label className="label" htmlFor="pan">PAN number</label>
+              <input
+                id="pan"
+                className="input"
+                placeholder="ABCDE1234F"
+                maxLength={10}
+                value={panNo}
+                onChange={(e) => setPanNo(e.target.value)}
+                required
+              />
+            </div>
+            <div className="field">
+              <label className="label" htmlFor="gender">Gender</label>
+              <select id="gender" className="input" value={gender} onChange={(e) => setGender(e.target.value)}>
+                <option>Male</option>
+                <option>Female</option>
+                <option>Other</option>
+              </select>
+            </div>
+            <div className="field">
+              <label className="label" htmlFor="marital">Marital status</label>
+              <select id="marital" className="input" value={maritalStatus} onChange={(e) => setMaritalStatus(e.target.value)}>
+                <option>Single</option>
+                <option>Married</option>
+              </select>
+            </div>
+          </>
+        )}
+        <div className="field">
+          <label className="label" htmlFor="occupation">Occupation</label>
+          <input id="occupation" className="input" value={occupation} onChange={(e) => setOccupation(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label className="label" htmlFor="income">Income range</label>
+          <select id="income" className="input" value={incomeRange} onChange={(e) => setIncomeRange(e.target.value)}>
+            {INCOME.map((i) => (
+              <option key={i} value={i}>{i}</option>
+            ))}
           </select>
         </div>
-        {error && <p style={{ color: 'red' }}>{error}</p>}
-        {message && <p style={{ color: 'green' }}>{message}</p>}
-        <button type="submit">Update</button>
-      </form>
-    </div>
+      </div>
+
+      {error && (
+        <div className="notice notice-error" role="alert">
+          <Icon name="alert-circle" size={16} /> {error}
+        </div>
+      )}
+      {message && (
+        <div className="notice notice-success" role="status">
+          <Icon name="check-circle" size={16} /> {message}
+        </div>
+      )}
+
+      <div>
+        <button type="submit" className="btn btn-primary">
+          {notFound ? 'Save KYC profile' : 'Update profile'}
+        </button>
+      </div>
+    </form>
   );
 }
 

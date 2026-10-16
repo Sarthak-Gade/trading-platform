@@ -1,102 +1,46 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from './context/AuthContext';
 import { apiFetch } from './api';
-import InstrumentSearch from './InstrumentSearch';
+import { inr } from './format';
+import type { Charges, Instrument, Quote } from './types';
+import Icon from './Icon';
 
-interface Quote {
-  symbol: string;
-  price: number;
-  previousClose: number | null;
-  change: number | null;
-  changePercent: number | null;
-  dayHigh: number | null;
-  dayLow: number | null;
-  marketState: string | null;
+interface Props {
+  instrument: Instrument;
+  quote: Quote | null;
+  quoteError: string;
+  onOrderPlaced: () => void;
 }
 
-interface Charges {
-  tradeValue: number;
-  brokerage: number;
-  stt: number;
-  exchangeCharges: number;
-  sebiCharges: number;
-  gst: number;
-  stampDuty: number;
-  totalCharges: number;
-}
-
-const QUOTE_REFRESH_MS = 5000;
-
-function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
+function OrderForm({ instrument, quote, quoteError, onOrderPlaced }: Props) {
   const { token } = useAuth();
-  const [type, setType] = useState<'buy' | 'sell'>('buy');
+  const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [productType, setProductType] = useState<'CNC' | 'MIS'>('CNC');
   const [orderType, setOrderType] = useState<'market' | 'limit'>('market');
   const [qty, setQty] = useState(1);
   const [limitPrice, setLimitPrice] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [selectedInstrument, setSelectedInstrument] = useState<{ id: string; symbol: string } | null>(null);
-  const [quote, setQuote] = useState<Quote | null>(null);
-  const [quoteError, setQuoteError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [chargesResult, setChargesResult] = useState<{ key: string; data: Charges } | null>(null);
 
-  // Load the live price when a stock is selected, then refresh it every few seconds
-  useEffect(() => {
-    if (!selectedInstrument) return;
-
-    let cancelled = false;
-
-    const loadQuote = () => {
-      apiFetch(`/api/instruments/${selectedInstrument.id}/quote`, token)
-        .then((data: Quote) => {
-          if (cancelled) return;
-          setQuote(data);
-          setQuoteError('');
-          // Pre-fill the limit price once, with the current market price
-          setLimitPrice((prev) => (prev === '' ? data.price.toFixed(2) : prev));
-        })
-        .catch((err) => {
-          if (cancelled) return;
-          setQuoteError(err instanceof Error ? err.message : 'Live price unavailable right now');
-        });
-    };
-
-    loadQuote();
-    const timer = setInterval(loadQuote, QUOTE_REFRESH_MS);
-
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [selectedInstrument, token]);
-
-  const handleSelect = (inst: { id: string; symbol: string }) => {
-    setSelectedInstrument({ id: inst.id, symbol: inst.symbol });
-    setQuote(null);
-    setQuoteError('');
-    setLimitPrice('');
-    setError('');
-    setMessage('');
-  };
-
   // The price this order would use: live price for market, typed price for limit
-  const effectivePrice = orderType === 'market' ? (quote?.price ?? null) : Number(limitPrice);
+  const limitValue = Number(limitPrice);
+  const effectivePrice = orderType === 'market' ? (quote?.price ?? null) : limitValue;
   const priceIsValid = effectivePrice !== null && Number.isFinite(effectivePrice) && effectivePrice > 0;
-  // A charges result is only shown while it still matches the current inputs
-  const chargesKey = `${type}|${productType}|${qty}|${effectivePrice}`;
-  const charges =
-    selectedInstrument && priceIsValid && chargesResult?.key === chargesKey ? chargesResult.data : null;
+
+  // A breakdown only shows while it still matches the current inputs
+  const chargesKey = `${instrument.id}|${side}|${productType}|${qty}|${effectivePrice}`;
+  const charges = priceIsValid && chargesResult?.key === chargesKey ? chargesResult.data : null;
 
   // Ask the server for the exact charges, so the formula lives in one place only
   useEffect(() => {
-    if (!selectedInstrument || !priceIsValid || effectivePrice === null) return;
+    if (!priceIsValid || effectivePrice === null) return;
 
     let cancelled = false;
     const timer = setTimeout(() => {
       apiFetch(
-        `/api/charges/estimate?direction=${type}&productType=${productType}&quantity=${qty}&price=${effectivePrice}`,
+        `/api/charges/estimate?direction=${side}&productType=${productType}&quantity=${qty}&price=${effectivePrice}`,
         token
       )
         .then((data: Charges) => {
@@ -111,47 +55,46 @@ function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [selectedInstrument, type, productType, qty, effectivePrice, priceIsValid, chargesKey, token]);
+  }, [side, productType, qty, effectivePrice, priceIsValid, chargesKey, token]);
+
+  const setQuantity = (value: number) => setQty(Math.min(100000, Math.max(1, Math.floor(value) || 1)));
+
+  const fillMarketPrice = () => {
+    if (quote) setLimitPrice(quote.price.toFixed(2));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
+    setMessage('');
 
-    if (!selectedInstrument) {
-      setError('Please select a stock first');
-      return;
-    }
     if (!priceIsValid) {
       setError(orderType === 'market' ? 'Waiting for the live price…' : 'Enter a valid limit price');
       return;
     }
 
-    setError('');
-    setMessage('');
     setSubmitting(true);
-
     try {
       const order = await apiFetch('/api/orders', token, {
         method: 'POST',
         body: JSON.stringify({
-          instrumentId: selectedInstrument.id,
-          type,
+          instrumentId: instrument.id,
+          type: side,
           orderType,
           productType,
           qty,
           // Market orders are priced by the server from the live quote, so no price is sent
-          ...(orderType === 'limit' ? { orderPrice: Number(limitPrice) } : {}),
+          ...(orderType === 'limit' ? { orderPrice: limitValue } : {}),
           validity: 'DAY',
         }),
       });
 
-      const result = await apiFetch(`/api/orders/${order.id}/execute`, token, {
-        method: 'POST',
-      });
+      const result = await apiFetch(`/api/orders/${order.id}/execute`, token, { method: 'POST' });
 
       setMessage(
-        `${type === 'buy' ? 'Bought' : 'Sold'} ${qty} ${selectedInstrument.symbol} at ₹${Number(
-          result.trade.pricePerShare
-        ).toFixed(2)}`
+        `${side === 'buy' ? 'Bought' : 'Sold'} ${qty} ${instrument.symbol} at ${inr(
+          Number(result.trade.pricePerShare)
+        )}`
       );
       onOrderPlaced();
     } catch (err) {
@@ -161,143 +104,184 @@ function OrderForm({ onOrderPlaced }: { onOrderPlaced: () => void }) {
     }
   };
 
-  const changeColor = quote && quote.change !== null && quote.change < 0 ? '#ef5350' : '#26a69a';
+  const total = charges
+    ? side === 'buy'
+      ? charges.tradeValue + charges.totalCharges
+      : charges.tradeValue - charges.totalCharges
+    : null;
 
   return (
-    <div style={{ border: '1px solid #ccc', padding: '1rem', borderRadius: '8px', maxWidth: '400px' }}>
-      <h2>Place Order {selectedInstrument ? `— ${selectedInstrument.symbol}` : ''}</h2>
-      <InstrumentSearch onSelect={handleSelect} />
-
-      {selectedInstrument && (
-        <div style={{ margin: '0.75rem 0', padding: '0.75rem', borderRadius: '6px', background: '#131722' }}>
-          {quote ? (
-            <>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
-                <span style={{ fontSize: '1.6rem', fontWeight: 700 }}>₹{quote.price.toFixed(2)}</span>
-                {quote.change !== null && quote.changePercent !== null && (
-                  <span style={{ color: changeColor, fontSize: '0.9rem' }}>
-                    {quote.change >= 0 ? '+' : ''}
-                    {quote.change.toFixed(2)} ({quote.changePercent >= 0 ? '+' : ''}
-                    {quote.changePercent.toFixed(2)}%)
-                  </span>
-                )}
-              </div>
-              {quote.dayLow !== null && quote.dayHigh !== null && (
-                <div style={{ fontSize: '0.8rem', color: '#9098ac', marginTop: '0.25rem' }}>
-                  Day range: ₹{quote.dayLow.toFixed(2)} – ₹{quote.dayHigh.toFixed(2)}
-                </div>
-              )}
-              {quote.marketState && quote.marketState !== 'REGULAR' && (
-                <div style={{ fontSize: '0.8rem', color: '#9098ac', marginTop: '0.25rem' }}>
-                  Market is not in a regular session — this is the last traded price.
-                </div>
-              )}
-            </>
-          ) : quoteError ? (
-            <span style={{ color: '#ef5350', fontSize: '0.9rem' }}>{quoteError}</span>
-          ) : (
-            <span style={{ color: '#9098ac', fontSize: '0.9rem' }}>Loading live price…</span>
-          )}
+    <form className="card ticket" onSubmit={handleSubmit}>
+      <div className="ticket-sym">
+        <div className="row">
+          <span className="symbol-chip">{instrument.symbol.slice(0, 2)}</span>
+          <div>
+            <div className="strong">{instrument.symbol}</div>
+            <div className="muted" style={{ fontSize: 12 }}>
+              {quote ? `LTP ${inr(quote.price)}` : quoteError ? 'Price unavailable' : 'Loading price…'}
+            </div>
+          </div>
         </div>
-      )}
+        <span className="card-title">Order ticket</span>
+      </div>
 
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: '0.75rem' }}>
-          <label>Type: </label>
-          <select value={type} onChange={(e) => setType(e.target.value as 'buy' | 'sell')}>
-            <option value="buy">Buy</option>
-            <option value="sell">Sell</option>
-          </select>
+      <div className="seg" role="tablist" aria-label="Buy or sell">
+        <button type="button" className={`seg-btn${side === 'buy' ? ' active buy' : ''}`} onClick={() => setSide('buy')}>
+          Buy
+        </button>
+        <button type="button" className={`seg-btn${side === 'sell' ? ' active sell' : ''}`} onClick={() => setSide('sell')}>
+          Sell
+        </button>
+      </div>
+
+      <div className="two-col">
+        <div className="field">
+          <span className="label">Product</span>
+          <div className="seg">
+            <button type="button" className={`seg-btn${productType === 'CNC' ? ' active' : ''}`} onClick={() => setProductType('CNC')} title="Delivery">
+              CNC
+            </button>
+            <button type="button" className={`seg-btn${productType === 'MIS' ? ' active' : ''}`} onClick={() => setProductType('MIS')} title="Intraday">
+              MIS
+            </button>
+          </div>
         </div>
-
-        <div style={{ marginBottom: '0.75rem' }}>
-          <label>Product: </label>
-          <select value={productType} onChange={(e) => setProductType(e.target.value as 'CNC' | 'MIS')}>
-            <option value="CNC">CNC (Delivery)</option>
-            <option value="MIS">MIS (Intraday)</option>
-          </select>
+        <div className="field">
+          <span className="label">Order type</span>
+          <div className="seg">
+            <button
+              type="button"
+              className={`seg-btn${orderType === 'market' ? ' active' : ''}`}
+              onClick={() => setOrderType('market')}
+            >
+              Market
+            </button>
+            <button
+              type="button"
+              className={`seg-btn${orderType === 'limit' ? ' active' : ''}`}
+              onClick={() => {
+                setOrderType('limit');
+                if (!limitPrice) fillMarketPrice();
+              }}
+            >
+              Limit
+            </button>
+          </div>
         </div>
+      </div>
 
-        <div style={{ marginBottom: '0.75rem' }}>
-          <label>Order: </label>
-          <select value={orderType} onChange={(e) => setOrderType(e.target.value as 'market' | 'limit')}>
-            <option value="market">Market (at live price)</option>
-            <option value="limit">Limit (my price)</option>
-          </select>
-        </div>
-
-        <div style={{ marginBottom: '0.75rem' }}>
-          <label>Quantity: </label>
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={qty}
-            onChange={(e) => setQty(Math.max(1, Math.floor(Number(e.target.value)) || 1))}
-            style={{ width: '80px' }}
-          />
-        </div>
-
-        <div style={{ marginBottom: '0.75rem' }}>
-          <label>Price: ₹</label>
-          {orderType === 'market' ? (
+      <div className="two-col">
+        <div className="field">
+          <label className="label" htmlFor="qty">Quantity</label>
+          <div className="stepper">
+            <button type="button" aria-label="Decrease quantity" onClick={() => setQuantity(qty - 1)}>
+              <Icon name="minus" size={14} />
+            </button>
             <input
-              type="text"
-              value={quote ? quote.price.toFixed(2) : 'At market'}
-              disabled
-              style={{ width: '100px' }}
+              id="qty"
+              className="input"
+              type="number"
+              min={1}
+              step={1}
+              value={qty}
+              onChange={(e) => setQuantity(Number(e.target.value))}
             />
+            <button type="button" aria-label="Increase quantity" onClick={() => setQuantity(qty + 1)}>
+              <Icon name="plus" size={14} />
+            </button>
+          </div>
+        </div>
+        <div className="field">
+          <label className="label" htmlFor="price">
+            {orderType === 'market' ? 'Price (live)' : 'Limit price (₹)'}
+          </label>
+          {orderType === 'market' ? (
+            <input id="price" className="input" disabled value={quote ? quote.price.toFixed(2) : 'At market'} />
           ) : (
             <input
+              id="price"
+              className="input"
               type="number"
               min={0}
               step="0.05"
               value={limitPrice}
               onChange={(e) => setLimitPrice(e.target.value)}
-              style={{ width: '100px' }}
             />
           )}
         </div>
+      </div>
 
-        {charges && (
-          <div style={{ fontSize: '0.85rem', color: '#9098ac', margin: '0 0 0.75rem' }}>
-            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-              <tbody>
-                <ChargeRow label="Trade value" value={charges.tradeValue} />
-                <ChargeRow label="Brokerage" value={charges.brokerage} />
-                <ChargeRow label="STT" value={charges.stt} />
-                <ChargeRow label="Exchange charges" value={charges.exchangeCharges} />
-                <ChargeRow label="SEBI fee" value={charges.sebiCharges} />
-                <ChargeRow label="GST" value={charges.gst} />
-                <ChargeRow label="Stamp duty" value={charges.stampDuty} />
-                <ChargeRow label="Total charges" value={charges.totalCharges} bold />
-                <ChargeRow
-                  label={type === 'buy' ? 'You pay about' : 'You receive about'}
-                  value={type === 'buy' ? charges.tradeValue + charges.totalCharges : charges.tradeValue - charges.totalCharges}
-                  bold
-                />
-              </tbody>
-            </table>
-          </div>
+      <div className="chips">
+        {[1, 5, 10, 25, 50, 100].map((n) => (
+          <button key={n} type="button" className="chip" onClick={() => setQuantity(n)}>
+            {n}
+          </button>
+        ))}
+        {orderType === 'limit' && quote && (
+          <button type="button" className="chip" onClick={fillMarketPrice}>
+            Use LTP
+          </button>
         )}
+      </div>
 
-        {error && <p style={{ color: 'red' }}>{error}</p>}
-        {message && <p style={{ color: 'green' }}>{message}</p>}
+      {charges ? (
+        <details className="charges">
+          <summary>
+            <span>
+              {side === 'buy' ? 'You pay about' : 'You receive about'} <b>{inr(total ?? 0)}</b>
+            </span>
+            <Icon name="chevron-down" size={16} />
+          </summary>
+          <div className="charges-body">
+            <ChargeRow label="Trade value" value={charges.tradeValue} />
+            <ChargeRow label="Brokerage" value={charges.brokerage} />
+            <ChargeRow label="STT" value={charges.stt} />
+            <ChargeRow label="Exchange charges" value={charges.exchangeCharges} />
+            <ChargeRow label="SEBI fee" value={charges.sebiCharges} />
+            <ChargeRow label="GST" value={charges.gst} />
+            <ChargeRow label="Stamp duty" value={charges.stampDuty} />
+            <div className="charges-row total">
+              <span>Total charges</span>
+              <span>{inr(charges.totalCharges)}</span>
+            </div>
+          </div>
+        </details>
+      ) : (
+        <div className="charges">
+          <div className="charges-body" style={{ borderTop: 'none', padding: '11px 14px', color: 'var(--muted)' }}>
+            {quoteError || 'Charges appear once the price is known.'}
+          </div>
+        </div>
+      )}
 
-        <button type="submit" disabled={submitting || !selectedInstrument}>
-          {submitting ? 'Placing…' : type === 'buy' ? 'Buy' : 'Sell'}
-        </button>
-      </form>
-    </div>
+      {error && (
+        <div className="notice notice-error" role="alert">
+          <Icon name="alert-circle" size={16} /> {error}
+        </div>
+      )}
+      {message && (
+        <div className="notice notice-success" role="status">
+          <Icon name="check-circle" size={16} /> {message}
+        </div>
+      )}
+
+      <button
+        type="submit"
+        className={`btn btn-lg btn-block ${side === 'buy' ? 'btn-buy' : 'btn-sell'}`}
+        disabled={submitting || !priceIsValid}
+      >
+        {submitting ? 'Placing order…' : `${side === 'buy' ? 'Buy' : 'Sell'} ${qty} ${instrument.symbol}`}
+      </button>
+    </form>
   );
 }
 
-function ChargeRow({ label, value, bold }: { label: string; value: number; bold?: boolean }) {
+function ChargeRow({ label, value }: { label: string; value: number }) {
   return (
-    <tr style={bold ? { fontWeight: 700, color: '#e4e6eb' } : undefined}>
-      <td style={{ padding: '2px 0' }}>{label}</td>
-      <td style={{ padding: '2px 0', textAlign: 'right' }}>₹{value.toFixed(2)}</td>
-    </tr>
+    <div className="charges-row">
+      <span>{label}</span>
+      <span>{inr(value)}</span>
+    </div>
   );
 }
 

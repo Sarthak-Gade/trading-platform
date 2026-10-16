@@ -1,71 +1,106 @@
 import { useState } from 'react';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
-import { useNavigate, Link } from 'react-router-dom';
+import { apiFetch } from './api';
+import AuthHero from './AuthHero';
+import Icon from './Icon';
 
 function Login() {
+  const { token, login } = useAuth();
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [show, setShow] = useState(false);
   const [error, setError] = useState('');
-  const { login } = useAuth();
-  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+
+  if (token) return <Navigate to="/dashboard" replace />;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-
+    setBusy(true);
     try {
-      const res = await fetch('http://localhost:5000/api/auth/login', {
+      const data = await apiFetch('/api/auth/login', null, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || 'Login failed');
-        return;
-      }
-
-      login(data.token);
+      login(data.token, { fullName: data.user?.fullName, email: data.user?.email ?? email });
       navigate('/dashboard');
-    } catch {
-      setError('Could not connect to server');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Login failed');
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '400px', margin: '0 auto', fontFamily: 'sans-serif' }}>
-      <h1>Login</h1>
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: '1rem' }}>
-          <label>Email</label>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            style={{ width: '100%', padding: '0.5rem' }}
-          />
+    <div className="auth-shell">
+      <AuthHero />
+      <div className="auth-panel">
+        <div className="auth-card">
+          <h2>Welcome back</h2>
+          <p className="sub">Log in to continue trading.</p>
+
+          <form className="stack" onSubmit={handleSubmit}>
+            <div className="field">
+              <label className="label" htmlFor="email">Email</label>
+              <div className="input-icon">
+                <Icon name="mail" size={16} className="lead" />
+                <input
+                  id="email"
+                  className="input"
+                  type="email"
+                  autoComplete="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="field">
+              <label className="label" htmlFor="password">Password</label>
+              <div className="input-icon has-trail">
+                <Icon name="lock" size={16} className="lead" />
+                <input
+                  id="password"
+                  className="input"
+                  type={show ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  placeholder="Your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+                <button
+                  type="button"
+                  className="icon-btn trail"
+                  aria-label={show ? 'Hide password' : 'Show password'}
+                  onClick={() => setShow((v) => !v)}
+                >
+                  <Icon name={show ? 'eye-off' : 'eye'} size={16} />
+                </button>
+              </div>
+            </div>
+
+            {error && (
+              <div className="notice notice-error" role="alert">
+                <Icon name="alert-circle" size={16} /> {error}
+              </div>
+            )}
+
+            <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={busy}>
+              {busy ? 'Logging in…' : 'Log in'}
+            </button>
+          </form>
+
+          <p className="auth-foot">
+            New to TradeSim? <Link to="/signup">Create an account</Link>
+          </p>
         </div>
-        <div style={{ marginBottom: '1rem' }}>
-          <label>Password</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            style={{ width: '100%', padding: '0.5rem' }}
-          />
-        </div>
-        {error && <p style={{ color: 'red' }}>{error}</p>}
-        <button type="submit" style={{ padding: '0.5rem 1rem' }}>
-          Log In
-        </button>
-      </form>
-      <p style={{ marginTop: '1rem' }}>
-  Don't have an account? <Link to="/signup">Sign up</Link>
-</p>
+      </div>
     </div>
   );
 }

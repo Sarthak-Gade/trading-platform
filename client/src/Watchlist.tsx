@@ -1,148 +1,201 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from './context/AuthContext';
 import { apiFetch } from './api';
+import { inr, signedPct, tone } from './format';
+import { useQuotes } from './hooks';
+import type { Instrument } from './types';
+import InstrumentSearch from './InstrumentSearch';
+import Icon from './Icon';
 
-const RELIANCE_INSTRUMENT_ID = '6bbe2977-4af6-4591-9953-18e40ffc8a82';
-
-interface WatchlistItem {
+interface Item {
   id: string;
-  instrument: { symbol: string; name: string };
+  instrument: Instrument;
 }
-
 interface WatchlistData {
   id: string;
   name: string;
-  items: WatchlistItem[];
+  items: Item[];
 }
-
-interface WatchlistSummary {
+interface Summary {
   id: string;
   name: string;
 }
 
-function Watchlist() {
+interface Props {
+  selected: Instrument;
+  onSelect: (instrument: Instrument) => void;
+}
+
+function Watchlist({ selected, onSelect }: Props) {
   const { token } = useAuth();
-  const [watchlists, setWatchlists] = useState<WatchlistSummary[]>([]);
-  const [activeWatchlist, setActiveWatchlist] = useState<WatchlistData | null>(null);
+  const [lists, setLists] = useState<Summary[] | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<WatchlistData | null>(null);
   const [newName, setNewName] = useState('');
   const [error, setError] = useState('');
 
-  const fetchWatchlists = () => {
+  const loadLists = useCallback(() => {
     apiFetch('/api/me/watchlists', token)
-      .then((data) => setWatchlists(data))
+      .then((data: Summary[]) => {
+        setLists(data);
+        // Open the first list by default
+        setActiveId((current) => current ?? data[0]?.id ?? null);
+      })
       .catch(() => setError('Could not load watchlists'));
-  };
-
-  useEffect(() => {
-    fetchWatchlists();
   }, [token]);
 
-  const fetchWatchlistDetail = (id: string) => {
-    apiFetch(`/api/watchlists/${id}`, token)
-      .then((data) => setActiveWatchlist(data))
-      .catch(() => setError('Could not load watchlist details'));
-  };
+  const loadDetail = useCallback(
+    (id: string) => {
+      apiFetch(`/api/watchlists/${id}`, token)
+        .then((data: WatchlistData) => setDetail(data))
+        .catch(() => setError('Could not load this watchlist'));
+    },
+    [token]
+  );
 
-  const handleCreate = async (e: React.FormEvent) => {
+  useEffect(() => {
+    loadLists();
+  }, [loadLists]);
+
+  useEffect(() => {
+    if (activeId) loadDetail(activeId);
+  }, [activeId, loadDetail]);
+
+  const items = detail && detail.id === activeId ? detail.items : [];
+  const quotes = useQuotes(items.map((i) => i.instrument.id));
+
+  const createList = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName.trim()) return;
-
+    setError('');
     try {
-      await apiFetch('/api/watchlists', token, {
+      const created: Summary = await apiFetch('/api/watchlists', token, {
         method: 'POST',
-        body: JSON.stringify({ name: newName }),
+        body: JSON.stringify({ name: newName.trim() }),
       });
       setNewName('');
-      fetchWatchlists();
+      setActiveId(created.id);
+      loadLists();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create watchlist');
+      setError(err instanceof Error ? err.message : 'Could not create the watchlist');
     }
   };
 
-  const handleAddReliance = async () => {
-    if (!activeWatchlist) return;
-
+  const addStock = async (instrument: Instrument) => {
+    if (!activeId) {
+      setError('Create a watchlist first');
+      return;
+    }
+    setError('');
     try {
-      await apiFetch(`/api/watchlists/${activeWatchlist.id}/items`, token, {
+      await apiFetch(`/api/watchlists/${activeId}/items`, token, {
         method: 'POST',
-        body: JSON.stringify({ instrumentId: RELIANCE_INSTRUMENT_ID }),
+        body: JSON.stringify({ instrumentId: instrument.id }),
       });
-      fetchWatchlistDetail(activeWatchlist.id);
+      loadDetail(activeId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not add instrument');
+      setError(err instanceof Error ? err.message : 'Could not add the stock');
     }
   };
 
-  const handleRemoveItem = async (itemId: string) => {
-    if (!activeWatchlist) return;
-
+  const removeItem = async (itemId: string) => {
+    if (!activeId) return;
     try {
-      await apiFetch(`/api/watchlists/${activeWatchlist.id}/items/${itemId}`, token, {
-        method: 'DELETE',
-      });
-      fetchWatchlistDetail(activeWatchlist.id);
+      await apiFetch(`/api/watchlists/${activeId}/items/${itemId}`, token, { method: 'DELETE' });
+      loadDetail(activeId);
     } catch {
-      setError('Could not remove item');
+      setError('Could not remove the stock');
     }
   };
 
   return (
-    <div style={{ marginBottom: '2rem' }}>
-      <h2>Watchlists</h2>
-
-      <form onSubmit={handleCreate} style={{ marginBottom: '1rem' }}>
-        <input
-          type="text"
-          placeholder="New watchlist name"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          style={{ padding: '0.4rem' }}
-        />
-        <button type="submit" style={{ marginLeft: '0.5rem' }}>
-          Create Watchlist
-        </button>
-      </form>
-
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-
-      {watchlists.length === 0 ? (
-        <p>No watchlists yet.</p>
-      ) : (
-        <div style={{ marginBottom: '1rem' }}>
-          {watchlists.map((w) => (
-            <button
-              key={w.id}
-              onClick={() => fetchWatchlistDetail(w.id)}
-              style={{
-                marginRight: '0.5rem',
-                fontWeight: activeWatchlist?.id === w.id ? 'bold' : 'normal',
-              }}
-            >
-              {w.name}
-            </button>
-          ))}
+    <div className="stack">
+      {error && (
+        <div className="notice notice-error">
+          <Icon name="alert-circle" size={16} /> {error}
         </div>
       )}
 
-      {activeWatchlist && (
-        <div style={{ border: '1px solid #ccc', borderRadius: '8px', padding: '1rem', maxWidth: '400px' }}>
-          <h3>{activeWatchlist.name}</h3>
-          <button onClick={handleAddReliance} style={{ marginBottom: '0.75rem' }}>
-            + Add RELIANCE
-          </button>
-          {activeWatchlist.items.length === 0 ? (
-            <p>No instruments added yet.</p>
-          ) : (
-            <ul>
-              {activeWatchlist.items.map((item) => (
-                <li key={item.id}>
-                  {item.instrument.symbol} — {item.instrument.name}{' '}
-                  <button onClick={() => handleRemoveItem(item.id)}>Remove</button>
-                </li>
-              ))}
-            </ul>
-          )}
+      <div className="row" style={{ flexWrap: 'wrap' }}>
+        <div className="pill-tabs">
+          {(lists ?? []).map((l) => (
+            <button
+              key={l.id}
+              type="button"
+              className={`pill-tab${l.id === activeId ? ' active' : ''}`}
+              onClick={() => setActiveId(l.id)}
+            >
+              {l.name}
+            </button>
+          ))}
         </div>
+        <span className="spacer" />
+        <form className="row" onSubmit={createList}>
+          <input
+            className="input"
+            style={{ width: 170, height: 34 }}
+            placeholder="New watchlist"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+          />
+          <button type="submit" className="btn btn-ghost btn-sm">
+            <Icon name="plus" size={14} /> Create
+          </button>
+        </form>
+      </div>
+
+      {activeId && (
+        <InstrumentSearch compact placeholder="Add a stock to this watchlist" onSelect={addStock} />
+      )}
+
+      {lists && lists.length === 0 ? (
+        <div className="empty">
+          <Icon name="star" size={32} />
+          Create a watchlist to track your favourite stocks.
+        </div>
+      ) : items.length === 0 ? (
+        <div className="empty">
+          <Icon name="star" size={32} />
+          This watchlist is empty. Search above to add a stock.
+        </div>
+      ) : (
+        <ul className="list">
+          {items.map((item) => {
+            const q = quotes[item.instrument.id];
+            const isSelected = item.instrument.id === selected.id;
+            return (
+              <li
+                key={item.id}
+                className="list-item clickable"
+                style={isSelected ? { borderColor: 'rgba(59,130,246,0.55)' } : undefined}
+                onClick={() => onSelect(item.instrument)}
+              >
+                <span className="symbol-chip">{item.instrument.symbol.slice(0, 2)}</span>
+                <div className="list-main">
+                  <strong>{item.instrument.symbol}</strong>
+                  <small>{item.instrument.name}</small>
+                </div>
+                <div className="list-end">
+                  <strong>{q ? inr(q.price) : '—'}</strong>
+                  {q && q.changePercent !== null && (
+                    <small className={tone(q.changePercent)}>{signedPct(q.changePercent)}</small>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="icon-btn danger"
+                  aria-label={`Remove ${item.instrument.symbol}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeItem(item.id);
+                  }}
+                >
+                  <Icon name="x" size={16} />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </div>
   );

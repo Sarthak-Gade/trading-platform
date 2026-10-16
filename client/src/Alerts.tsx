@@ -1,117 +1,147 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from './context/AuthContext';
-import { apiFetch } from './api';
-
-const RELIANCE_INSTRUMENT_ID = '6bbe2977-4af6-4591-9953-18e40ffc8a82';
+import { API_BASE, apiFetch } from './api';
+import { inr } from './format';
+import type { Instrument, Quote } from './types';
+import Icon from './Icon';
 
 interface Alert {
   id: string;
   triggerPrice: string;
   condition: string;
   status: string;
-  instrument: {
-    symbol: string;
-  };
+  instrument: { symbol: string };
 }
 
-function Alerts() {
+// Price alerts for the stock currently selected on the dashboard
+function Alerts({ instrument, quote }: { instrument: Instrument; quote: Quote | null }) {
   const { token } = useAuth();
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [triggerPrice, setTriggerPrice] = useState(100000);
+  const [alerts, setAlerts] = useState<Alert[] | null>(null);
+  const [triggerPrice, setTriggerPrice] = useState('');
   const [condition, setCondition] = useState<'above' | 'below'>('above');
   const [error, setError] = useState('');
-  const [notification, setNotification] = useState('');
+  const [toast, setToast] = useState('');
 
-  const fetchAlerts = () => {
+  const load = useCallback(() => {
     apiFetch('/api/me/alerts', token)
-      .then((data) => setAlerts(data))
+      .then((data: Alert[]) => setAlerts(data))
       .catch(() => setError('Could not load alerts'));
-  };
-
-  useEffect(() => {
-    fetchAlerts();
   }, [token]);
 
   useEffect(() => {
-    const socket = io('http://localhost:5000');
+    load();
+  }, [load]);
 
+  useEffect(() => {
+    const socket = io(API_BASE);
+    let timer: ReturnType<typeof setTimeout> | undefined;
     socket.on('alertTriggered', (data: { alertId: string; price: number }) => {
-      setNotification(`Alert triggered! Price hit ${data.price}`);
-      fetchAlerts();
-      setTimeout(() => setNotification(''), 5000);
+      setToast(`Alert triggered at ${inr(data.price)}`);
+      load();
+      clearTimeout(timer);
+      timer = setTimeout(() => setToast(''), 6000);
     });
-
     return () => {
+      clearTimeout(timer);
       socket.disconnect();
     };
-  }, []);
+  }, [load]);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const create = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-
+    const price = Number(triggerPrice);
+    if (!Number.isFinite(price) || price <= 0) {
+      setError('Enter a valid trigger price');
+      return;
+    }
     try {
       await apiFetch('/api/alerts', token, {
         method: 'POST',
-        body: JSON.stringify({
-          instrumentId: RELIANCE_INSTRUMENT_ID,
-          triggerPrice,
-          condition,
-        }),
+        body: JSON.stringify({ instrumentId: instrument.id, triggerPrice: price, condition }),
       });
-      fetchAlerts();
+      setTriggerPrice('');
+      load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create alert');
+      setError(err instanceof Error ? err.message : 'Could not create the alert');
     }
   };
 
-  const handleDelete = async (alertId: string) => {
+  const remove = async (id: string) => {
     try {
-      await apiFetch(`/api/alerts/${alertId}`, token, { method: 'DELETE' });
-      fetchAlerts();
+      await apiFetch(`/api/alerts/${id}`, token, { method: 'DELETE' });
+      load();
     } catch {
-      setError('Could not delete alert');
+      setError('Could not delete the alert');
     }
   };
 
   return (
-    <div style={{ marginBottom: '2rem' }}>
-      <h2>Price Alerts</h2>
-
-      {notification && (
-        <div style={{ background: '#fff3cd', padding: '0.75rem', borderRadius: '4px', marginBottom: '1rem' }}>
-          {notification}
+    <div className="stack">
+      {toast && (
+        <div className="notice notice-warn toast" role="status">
+          <Icon name="bell" size={16} /> {toast}
         </div>
       )}
 
-      <form onSubmit={handleCreate} style={{ marginBottom: '1rem' }}>
-        <select value={condition} onChange={(e) => setCondition(e.target.value as 'above' | 'below')}>
-          <option value="above">Above</option>
-          <option value="below">Below</option>
-        </select>
-        <input
-          type="number"
-          value={triggerPrice}
-          onChange={(e) => setTriggerPrice(Number(e.target.value))}
-          style={{ width: '120px', marginLeft: '0.5rem' }}
-        />
-        <button type="submit" style={{ marginLeft: '0.5rem' }}>
-          Set Alert
+      <form className="inline-form" onSubmit={create}>
+        <div className="field" style={{ maxWidth: 140 }}>
+          <label className="label" htmlFor="alert-cond">{instrument.symbol} goes</label>
+          <select
+            id="alert-cond"
+            className="input"
+            value={condition}
+            onChange={(e) => setCondition(e.target.value as 'above' | 'below')}
+          >
+            <option value="above">Above</option>
+            <option value="below">Below</option>
+          </select>
+        </div>
+        <div className="field">
+          <label className="label" htmlFor="alert-price">Trigger price (₹)</label>
+          <input
+            id="alert-price"
+            className="input"
+            type="number"
+            min={0}
+            step="0.05"
+            placeholder={quote ? quote.price.toFixed(2) : 'Price'}
+            value={triggerPrice}
+            onChange={(e) => setTriggerPrice(e.target.value)}
+          />
+        </div>
+        <button type="submit" className="btn btn-primary">
+          <Icon name="plus" size={16} /> Set alert
         </button>
       </form>
 
-      {error && <p style={{ color: 'red' }}>{error}</p>}
+      {error && (
+        <div className="notice notice-error">
+          <Icon name="alert-circle" size={16} /> {error}
+        </div>
+      )}
 
-      {alerts.length === 0 ? (
-        <p>No alerts set.</p>
+      {alerts && alerts.length === 0 ? (
+        <div className="empty">
+          <Icon name="bell" size={32} />
+          No alerts yet.
+        </div>
       ) : (
-        <ul>
-          {alerts.map((a) => (
-            <li key={a.id}>
-              {a.instrument.symbol} — {a.condition} ₹{a.triggerPrice} —{' '}
-              <strong>{a.status}</strong>{' '}
-              <button onClick={() => handleDelete(a.id)}>Delete</button>
+        <ul className="list">
+          {(alerts ?? []).map((a) => (
+            <li key={a.id} className="list-item">
+              <span className="symbol-chip">{a.instrument.symbol.slice(0, 2)}</span>
+              <div className="list-main">
+                <strong>{a.instrument.symbol}</strong>
+                <small>
+                  {a.condition === 'above' ? 'Rises above' : 'Falls below'} {inr(Number(a.triggerPrice))}
+                </small>
+              </div>
+              <span className={`badge ${a.status === 'triggered' ? 'badge-green' : 'badge-blue'}`}>{a.status}</span>
+              <button type="button" className="icon-btn danger" aria-label="Delete alert" onClick={() => remove(a.id)}>
+                <Icon name="trash" size={16} />
+              </button>
             </li>
           ))}
         </ul>
