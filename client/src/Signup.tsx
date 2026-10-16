@@ -92,6 +92,7 @@ function Signup() {
                   type="tel"
                   autoComplete="tel"
                   placeholder="10-digit mobile number"
+                  maxLength={15}
                   value={mobNumber}
                   onChange={(e) => setMobNumber(e.target.value)}
                   required
@@ -108,7 +109,9 @@ function Signup() {
                   className="input"
                   type={show ? 'text' : 'password'}
                   autoComplete="new-password"
-                  placeholder="Choose a strong password"
+                  placeholder="8+ characters with a letter and a number"
+                  minLength={8}
+                  maxLength={72}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required

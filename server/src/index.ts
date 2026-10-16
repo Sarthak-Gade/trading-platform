@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import prisma from './lib/prisma';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
@@ -14,12 +14,35 @@ import { Prisma } from '@prisma/client';
 import { HttpError, roundMoney, sendError, validateOrderInput } from './lib/trading';
 import { calculateCharges } from './lib/charges';
 import { getQuote } from './lib/quotes';
+import {
+  validateSignup, validateLogin, validateAmount, validateAlert, validateWatchlistName,
+  validateInstrumentId, validateAccountCreate, validateAccountPatch, validateBank,
+} from './lib/validate';
+import { generalLimiter, loginLimiter, signupLimiter, orderLimiter, moneyLimiter } from './middleware/rateLimit';
+import { securityHeaders } from './middleware/security';
+
+if (!process.env.JWT_SECRET) {
+  console.error('JWT_SECRET is not set. Add it to server/.env before starting the server.');
+  process.exit(1);
+}
 
 const app = express();
-app.use(cors());
+
+// Set TRUST_PROXY=1 when the server runs behind a proxy or load balancer, so rate limits see the
+// real client IP instead of the proxy's.
+if (process.env.TRUST_PROXY) {
+  app.set('trust proxy', Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
+}
+
+// CLIENT_ORIGIN can hold one or more comma-separated origins. Without it every origin is allowed,
+// which is fine for local development.
+const allowedOrigins = process.env.CLIENT_ORIGIN?.split(',').map((o) => o.trim()).filter(Boolean);
+app.use(cors(allowedOrigins && allowedOrigins.length > 0 ? { origin: allowedOrigins } : undefined));
 const PORT = process.env.PORT || 5000;
 
-app.use(express.json());
+app.use(securityHeaders);
+app.use(express.json({ limit: '10kb' }));
+app.use('/api', generalLimiter);
 
 app.get('/api/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', message: 'Trading platform server is running' });
@@ -74,11 +97,18 @@ app.get('/api/admin/stats', requireAuth, requireAdmin, async (req: AuthRequest, 
   }
 });
 
-app.post('/api/auth/signup', async (req: Request, res: Response) => {
+app.post('/api/auth/signup', signupLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password, fullName, mobNumber } = req.body;
+    const parsed = validateSignup(req.body);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    const { email, password, fullName, mobNumber } = parsed.value;
 
-    const existingUser = await prisma.user.findUnique({ where: { email } });
+    // Emails are stored in lower case; the case-insensitive check also catches older accounts
+    const existingUser = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+    });
     if (existingUser) {
       return res.status(409).json({ error: 'An account with this email already exists' });
     }
@@ -99,16 +129,27 @@ app.post('/api/auth/signup', async (req: Request, res: Response) => {
 
     res.status(201).json({ id: user.id, email: user.email, fullName: user.fullName });
   } catch (error) {
+    // Two signups with the same email at the same moment: the database's unique rule catches the second
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return res.status(409).json({ error: 'An account with this email already exists' });
+    }
     console.error('Signup error:', error);
     res.status(500).json({ error: 'Something went wrong during signup' });
   }
 });
 
-app.post('/api/auth/login', async (req: Request, res: Response) => {
+app.post('/api/auth/login', loginLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
+    const parsed = validateLogin(req.body);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    const { email, password } = parsed.value;
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    // Case-insensitive so accounts created before emails were lower-cased still work
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+    });
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
@@ -150,7 +191,11 @@ app.get('/api/me/holdings', requireAuth, async (req: AuthRequest, res: Response)
 app.post('/api/alerts', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;
-    const { instrumentId, triggerPrice, condition } = req.body;
+    const parsed = validateAlert(req.body);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    const { instrumentId, triggerPrice, condition } = parsed.value;
 
     const instrument = await prisma.instrument.findUnique({ where: { id: instrumentId } });
     if (!instrument) {
@@ -262,7 +307,7 @@ app.get('/api/me/trades', requireAuth, async (req: AuthRequest, res: Response) =
   }
 });
 
-app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => {
+app.post('/api/orders', requireAuth, orderLimiter, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;
 
@@ -359,7 +404,7 @@ app.post('/api/orders', requireAuth, async (req: AuthRequest, res: Response) => 
   }
 });
 
-app.post('/api/orders/:orderId/execute', requireAuth, async (req: AuthRequest, res: Response) => {
+app.post('/api/orders/:orderId/execute', requireAuth, orderLimiter, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;
     const rawOrderId = req.params.orderId;
@@ -628,10 +673,13 @@ app.post('/api/orders/:orderId/cancel', requireAuth, async (req: AuthRequest, re
 app.post('/api/watchlists', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;
-    const { name } = req.body;
+    const parsed = validateWatchlistName(req.body);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
 
     const watchlist = await prisma.watchlist.create({
-      data: { userId, name },
+      data: { userId, name: parsed.value },
     });
 
     res.status(201).json(watchlist);
@@ -688,7 +736,11 @@ app.post('/api/watchlists/:watchlistId/items', requireAuth, async (req: AuthRequ
   try {
     const userId = req.userId as string;
     const rawWatchlistId = req.params.watchlistId;
-    const { instrumentId } = req.body;
+    const parsedInstrument = validateInstrumentId(req.body);
+    if (!parsedInstrument.ok) {
+      return res.status(400).json({ error: parsedInstrument.error });
+    }
+    const instrumentId = parsedInstrument.value;
 
     if (!rawWatchlistId || Array.isArray(rawWatchlistId)) {
       return res.status(400).json({ error: 'Watchlist ID is required' });
@@ -782,7 +834,11 @@ app.delete('/api/watchlists/:watchlistId/items/:itemId', requireAuth, async (req
 app.post('/api/me/account', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;
-    const { dob, pan_no, gender, maritalStatus, occupation, incomeRange } = req.body;
+    const parsed = validateAccountCreate(req.body);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    const { dob, pan_no, gender, maritalStatus, occupation, incomeRange } = parsed.value;
 
     const existing = await prisma.account.findUnique({ where: { userId } });
     if (existing) {
@@ -794,7 +850,7 @@ app.post('/api/me/account', requireAuth, async (req: AuthRequest, res: Response)
     const account = await prisma.account.create({
       data: {
         userId,
-        dob: new Date(dob),
+        dob,
         pan_no,
         gender,
         maritalStatus,
@@ -806,6 +862,10 @@ app.post('/api/me/account', requireAuth, async (req: AuthRequest, res: Response)
 
     res.status(201).json(account);
   } catch (error) {
+    // pan_no is unique: someone else already registered this PAN
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return res.status(409).json({ error: 'This PAN is already registered with another account' });
+    }
     console.error('Error creating account details:', error);
     res.status(500).json({ error: 'Something went wrong saving account details' });
   }
@@ -831,7 +891,10 @@ app.get('/api/me/account', requireAuth, async (req: AuthRequest, res: Response) 
 app.patch('/api/me/account', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;
-    const { gender, maritalStatus, occupation, incomeRange } = req.body;
+    const parsed = validateAccountPatch(req.body);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
 
     const existing = await prisma.account.findUnique({ where: { userId } });
     if (!existing) {
@@ -840,7 +903,7 @@ app.patch('/api/me/account', requireAuth, async (req: AuthRequest, res: Response
 
     const updated = await prisma.account.update({
       where: { userId },
-      data: { gender, maritalStatus, occupation, incomeRange },
+      data: parsed.value,
     });
 
     res.json(updated);
@@ -853,7 +916,16 @@ app.patch('/api/me/account', requireAuth, async (req: AuthRequest, res: Response
 app.post('/api/me/banks', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;
-    const { accountNumber, ifscCode, bankBranch } = req.body;
+    const parsed = validateBank(req.body);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    const { accountNumber, ifscCode, bankBranch } = parsed.value;
+
+    const existingBanks = await prisma.bank.count({ where: { userId } });
+    if (existingBanks >= 5) {
+      return res.status(400).json({ error: 'You can link at most 5 bank accounts' });
+    }
 
     const bank = await prisma.bank.create({
       data: { userId, accountNumber, ifscCode, bankBranch, status: 'pending' },
@@ -974,72 +1046,67 @@ app.get('/api/instruments/:instrumentId/quote', requireAuth, async (req: AuthReq
   }
 });
 
-app.post('/api/me/deposit', requireAuth, async (req: AuthRequest, res: Response) => {
+app.post('/api/me/deposit', requireAuth, moneyLimiter, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;
-    const { amount } = req.body;
-
-    if (typeof amount !== 'number' || amount <= 0) {
-      return res.status(400).json({ error: 'Deposit amount must be a positive number' });
+    const parsed = validateAmount(req.body, 'Deposit');
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
     }
+    const amount = parsed.value;
 
     const result = await prisma.$transaction(async (tx) => {
-      const balance = await tx.balance.findUnique({ where: { userId } });
-      if (!balance) throw new Error('Balance not found');
-
-      const newBalance = Number(balance.availableBalance) + amount;
-
+      // increment is applied by the database itself, so two deposits at once can't overwrite each other
       const updated = await tx.balance.update({
         where: { userId },
-        data: { availableBalance: newBalance },
+        data: { availableBalance: { increment: amount } },
       });
 
-      await recordTransaction(tx, userId, 'deposit', `Deposit of ₹${amount}`, amount, newBalance);
+      await recordTransaction(
+        tx, userId, 'deposit', `Deposit of ₹${amount}`, amount, Number(updated.availableBalance)
+      );
 
       return updated;
     });
 
     res.status(201).json(result);
   } catch (error) {
-    console.error('Error processing deposit:', error);
-    res.status(500).json({ error: 'Something went wrong processing the deposit' });
+    sendError(res, error, 'processing the deposit');
   }
 });
 
-app.post('/api/me/withdraw', requireAuth, async (req: AuthRequest, res: Response) => {
+app.post('/api/me/withdraw', requireAuth, moneyLimiter, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;
-    const { amount } = req.body;
-
-    if (typeof amount !== 'number' || amount <= 0) {
-      return res.status(400).json({ error: 'Withdrawal amount must be a positive number' });
+    const parsed = validateAmount(req.body, 'Withdrawal');
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
     }
+    const amount = parsed.value;
 
     const result = await prisma.$transaction(async (tx) => {
-      const balance = await tx.balance.findUnique({ where: { userId } });
-      if (!balance) throw new Error('Balance not found');
-
-      if (Number(balance.availableBalance) < amount) {
-        throw new Error('Insufficient balance for this withdrawal');
+      // The balance check and the deduction are one statement, so two withdrawals at once
+      // can never take the balance below zero.
+      const deducted = await tx.balance.updateMany({
+        where: { userId, availableBalance: { gte: amount } },
+        data: { availableBalance: { decrement: amount } },
+      });
+      if (deducted.count === 0) {
+        throw new HttpError(400, 'Insufficient balance for this withdrawal');
       }
 
-      const newBalance = Number(balance.availableBalance) - amount;
+      const updated = await tx.balance.findUniqueOrThrow({ where: { userId } });
 
-      const updated = await tx.balance.update({
-        where: { userId },
-        data: { availableBalance: newBalance },
-      });
-
-      await recordTransaction(tx, userId, 'withdrawal', `Withdrawal of ₹${amount}`, -amount, newBalance);
+      await recordTransaction(
+        tx, userId, 'withdrawal', `Withdrawal of ₹${amount}`, -amount, Number(updated.availableBalance)
+      );
 
       return updated;
     });
 
     res.status(201).json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Something went wrong processing the withdrawal';
-    console.error('Error processing withdrawal:', error);
-    res.status(400).json({ error: message });
+    sendError(res, error, 'processing the withdrawal');
   }
 });
 
@@ -1057,6 +1124,16 @@ app.get('/api/me/transactions', requireAuth, async (req: AuthRequest, res: Respo
     console.error('Error fetching transactions:', error);
     res.status(500).json({ error: 'Something went wrong fetching transactions' });
   }
+});
+
+// Last resort for errors Express raises itself, such as a malformed or oversized JSON body
+app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) return next(err);
+  const e = err as { status?: number; type?: string };
+  if (e.type === 'entity.too.large') return res.status(413).json({ error: 'Request body is too large' });
+  if (e.type === 'entity.parse.failed') return res.status(400).json({ error: 'Request body is not valid JSON' });
+  console.error('Unhandled error:', err);
+  res.status(e.status && e.status >= 400 && e.status < 600 ? e.status : 500).json({ error: 'Something went wrong' });
 });
 
 const httpServer = createServer(app);
