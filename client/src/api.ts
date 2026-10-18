@@ -1,6 +1,19 @@
 // One place for the server address. Set VITE_API_URL in client/.env to point somewhere else.
 export const API_BASE: string = import.meta.env.VITE_API_URL ?? 'http://localhost:5000';
 
+// An error that also carries the HTTP status and the server's full JSON reply, so screens can react
+// to codes such as ACCOUNT_LOCKED or NOT_VERIFIED instead of only showing the message.
+export class ApiError extends Error {
+  status: number;
+  data: Record<string, unknown>;
+
+  constructor(message: string, status: number, data: Record<string, unknown>) {
+    super(message);
+    this.status = status;
+    this.data = data;
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function apiFetch(path: string, token: string | null, options: RequestInit = {}): Promise<any> {
   let res: Response;
@@ -30,8 +43,9 @@ export async function apiFetch(path: string, token: string | null, options: Requ
   }
 
   if (!res.ok) {
-    const message = (data as { error?: string } | null)?.error;
-    throw new Error(message || 'Request failed');
+    const body = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
+    const message = typeof body.error === 'string' ? body.error : '';
+    throw new ApiError(message || 'Request failed', res.status, body);
   }
 
   return data;

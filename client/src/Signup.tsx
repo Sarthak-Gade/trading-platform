@@ -6,7 +6,7 @@ import AuthHero from './AuthHero';
 import Icon from './Icon';
 
 function Signup() {
-  const { token, login } = useAuth();
+  const { token} = useAuth();
   const navigate = useNavigate();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -18,21 +18,17 @@ function Signup() {
 
   if (token) return <Navigate to="/dashboard" replace />;
 
-  const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setBusy(true);
     try {
-      await apiFetch('/api/auth/signup', null, {
+      const data = await apiFetch('/api/auth/signup', null, {
         method: 'POST',
         body: JSON.stringify({ email, password, fullName, mobNumber }),
       });
-      const data = await apiFetch('/api/auth/login', null, {
-        method: 'POST',
-        body: JSON.stringify({ email, password }),
-      });
-      login(data.token, { fullName: data.user?.fullName ?? fullName, email: data.user?.email ?? email });
-      navigate('/dashboard');
+      // The account must confirm its email and mobile number before it can log in
+      navigate('/verify', { state: { ...data, email } });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Signup failed');
     } finally {

@@ -37,6 +37,19 @@ function hasAtMostTwoDecimals(n: number): boolean {
 
 // ---------- Auth ----------
 
+// Returns what is wrong with a password, or null if it is acceptable
+export function passwordProblem(password: unknown): string | null {
+  if (typeof password !== 'string') return 'Password is required';
+  // bcrypt only reads the first 72 bytes, so longer passwords would be silently cut short
+  if (password.length < 8 || Buffer.byteLength(password, 'utf8') > 72) {
+    return 'Password must be 8 to 72 characters';
+  }
+  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+    return 'Password must contain at least one letter and one number';
+  }
+  return null;
+}
+
 export interface SignupInput {
   email: string;
   password: string;
@@ -59,14 +72,8 @@ export function validateSignup(input: unknown): Result<SignupInput> {
   if (!mobMatch || !mobMatch[1]) return fail('Enter a valid 10-digit Indian mobile number');
 
   const password = b.password;
-  if (typeof password !== 'string') return fail('Password is required');
-  // bcrypt only reads the first 72 bytes, so longer passwords would be silently cut short
-  if (password.length < 8 || Buffer.byteLength(password, 'utf8') > 72) {
-    return fail('Password must be 8 to 72 characters');
-  }
-  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
-    return fail('Password must contain at least one letter and one number');
-  }
+  const problem = passwordProblem(password);
+  if (problem || typeof password !== 'string') return fail(problem ?? 'Password is required');
 
   return { ok: true, value: { email, password, fullName, mobNumber: mobMatch[1] } };
 }
@@ -218,4 +225,45 @@ export function validateBank(
   if (!bankBranch) return fail('Branch must be 2 to 80 characters');
 
   return { ok: true, value: { accountNumber, ifscCode, bankBranch } };
+}
+
+// ---------- Email and mobile codes (OTP) ----------
+
+function cleanEmail(value: unknown): string | null {
+  const email = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return email.length > 0 && email.length <= 254 && EMAIL_RE.test(email) ? email : null;
+}
+
+export function validateEmailOnly(input: unknown): Result<string> {
+  const email = cleanEmail(body(input).email);
+  return email ? { ok: true, value: email } : fail('Enter a valid email address');
+}
+
+export function validateVerify(input: unknown): Result<{ email: string; code: string }> {
+  const b = body(input);
+  const email = cleanEmail(b.email);
+  if (!email) return fail('Enter a valid email address');
+  const code = typeof b.code === 'string' ? b.code.replace(/\s/g, '') : '';
+  if (!/^\d{6}$/.test(code)) return fail('Enter the 6-digit code');
+  return { ok: true, value: { email, code } };
+}
+
+export function validateReset(input: unknown): Result<{ email: string; code: string; newPassword: string }> {
+  const verified = validateVerify(input);
+  if (!verified.ok) return verified;
+  const newPassword = body(input).newPassword;
+  const problem = passwordProblem(newPassword);
+  if (problem) return fail(problem);
+  return { ok: true, value: { ...verified.value, newPassword: newPassword as string } };
+}
+
+export function validateResend(
+  input: unknown
+): Result<{ email: string; channel: 'email' | 'mobile' | null }> {
+  const email = cleanEmail(body(input).email);
+  if (!email) return fail('Enter a valid email address');
+  const channel = body(input).channel;
+  if (channel === undefined) return { ok: true, value: { email, channel: null } };
+  if (channel !== 'email' && channel !== 'mobile') return fail('channel must be "email" or "mobile"');
+  return { ok: true, value: { email, channel } };
 }

@@ -1,8 +1,6 @@
 import express, { NextFunction, Request, Response } from 'express';
 import prisma from './lib/prisma';
-import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
-import { requireAuth,requireAdmin, AuthRequest } from './middleware/auth';
+import { requireAuth, requireAdmin, AuthRequest } from './middleware/auth';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { connectToFinnhub } from './lib/finnhub';
@@ -15,11 +13,12 @@ import { HttpError, roundMoney, sendError, validateOrderInput } from './lib/trad
 import { calculateCharges } from './lib/charges';
 import { getQuote } from './lib/quotes';
 import {
-  validateSignup, validateLogin, validateAmount, validateAlert, validateWatchlistName,
+  validateAmount, validateAlert, validateWatchlistName,
   validateInstrumentId, validateAccountCreate, validateAccountPatch, validateBank,
 } from './lib/validate';
-import { generalLimiter, loginLimiter, signupLimiter, orderLimiter, moneyLimiter } from './middleware/rateLimit';
+import { generalLimiter, orderLimiter, moneyLimiter } from './middleware/rateLimit';
 import { securityHeaders } from './middleware/security';
+import authRouter from './routes/auth';
 
 if (!process.env.JWT_SECRET) {
   console.error('JWT_SECRET is not set. Add it to server/.env before starting the server.');
@@ -97,80 +96,7 @@ app.get('/api/admin/stats', requireAuth, requireAdmin, async (req: AuthRequest, 
   }
 });
 
-app.post('/api/auth/signup', signupLimiter, async (req: Request, res: Response) => {
-  try {
-    const parsed = validateSignup(req.body);
-    if (!parsed.ok) {
-      return res.status(400).json({ error: parsed.error });
-    }
-    const { email, password, fullName, mobNumber } = parsed.value;
-
-    // Emails are stored in lower case; the case-insensitive check also catches older accounts
-    const existingUser = await prisma.user.findFirst({
-      where: { email: { equals: email, mode: 'insensitive' } },
-    });
-    if (existingUser) {
-      return res.status(409).json({ error: 'An account with this email already exists' });
-    }
-
-    const passwordHash = await bcrypt.hash(password, 10);
-
-    const user = await prisma.user.create({
-      data: {
-        email,
-        passwordHash,
-        fullName,
-        mobNumber,
-        balance: {
-          create: { availableBalance: 0, usedMargin: 0 },
-        },
-      },
-    });
-
-    res.status(201).json({ id: user.id, email: user.email, fullName: user.fullName });
-  } catch (error) {
-    // Two signups with the same email at the same moment: the database's unique rule catches the second
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      return res.status(409).json({ error: 'An account with this email already exists' });
-    }
-    console.error('Signup error:', error);
-    res.status(500).json({ error: 'Something went wrong during signup' });
-  }
-});
-
-app.post('/api/auth/login', loginLimiter, async (req: Request, res: Response) => {
-  try {
-    const parsed = validateLogin(req.body);
-    if (!parsed.ok) {
-      return res.status(400).json({ error: parsed.error });
-    }
-    const { email, password } = parsed.value;
-
-    // Case-insensitive so accounts created before emails were lower-cased still work
-    const user = await prisma.user.findFirst({
-      where: { email: { equals: email, mode: 'insensitive' } },
-    });
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-
-    const passwordMatches = await bcrypt.compare(password, user.passwordHash);
-    if (!passwordMatches) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-
-    const token = jwt.sign(
-      { userId: user.id, role: user.role },
-      process.env.JWT_SECRET as string,
-      { expiresIn: '7d' }
-    );
-
-    res.json({ token, user: { id: user.id, email: user.email, fullName: user.fullName } });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Something went wrong during login' });
-  }
-});
+app.use('/api/auth', authRouter);
 
 app.get('/api/me/holdings', requireAuth, async (req: AuthRequest, res: Response) => {
   try {

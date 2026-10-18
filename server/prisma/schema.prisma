@@ -22,16 +22,41 @@ model User {
   role         Role     @default(USER)
   createdAt    DateTime @default(now())
 
-  account    Account?
-  banks      Bank[]
-  orders     Order[]
-  trades     Trade[]
-  positions  Position[]
-  holdings   Holding[]
-  watchlists Watchlist[]
-  alerts     Alert[]
-  balance    Balance?
+  // Set when the user proves they own the email address / mobile number with a one-time code
+  emailVerifiedAt  DateTime?
+  mobileVerifiedAt DateTime?
+  // Wrong-password counter; at 5 the account is locked until lockedUntil
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+
+  account      Account?
+  banks        Bank[]
+  orders       Order[]
+  trades       Trade[]
+  positions    Position[]
+  holdings     Holding[]
+  watchlists   Watchlist[]
+  alerts       Alert[]
+  balance      Balance?
   transactions Transaction[]
+  otpCodes     OtpCode[]
+}
+
+// One-time codes for email verification, mobile verification and password reset.
+// Only a hash of the code is stored.
+model OtpCode {
+  id        String   @id @default(uuid())
+  purpose   String   // "verify_email" | "verify_mobile" | "reset_password"
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  sentAt    DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
+
+  // A new code for the same purpose replaces the old one
+  @@unique([userId, purpose])
 }
 
 model Balance {

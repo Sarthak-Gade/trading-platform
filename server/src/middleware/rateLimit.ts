@@ -91,3 +91,10 @@ export const moneyLimiter = rateLimit({
   key: byUser,
   message: 'Too many wallet requests. Please wait a moment.',
 });
+
+// Verification codes, resends and password resets share one budget per IP
+export const otpLimiter = rateLimit({
+  windowMs: 15 * MINUTE,
+  max: 20,
+  message: 'Too many code requests. Please try again in a few minutes.',
+});

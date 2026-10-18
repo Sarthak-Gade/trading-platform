@@ -8,6 +8,8 @@ import ProtectedRoute from './ProtectedRoute';
 import AdminRoute from './AdminRoute';
 import Login from './Login';
 import Signup from './Signup';
+import Verify from './Verify';
+import ForgotPassword from './ForgotPassword';
 import Dashboard from './Dashboard';
 import Portfolio from './Portfolio';
 import WalletPage from './WalletPage';
@@ -23,6 +25,8 @@ createRoot(document.getElementById('root')!).render(
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
+            <Route path="/verify" element={<Verify />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
 
             <Route element={<ProtectedRoute />}>
               <Route element={<Layout />}>
