@@ -5,6 +5,7 @@ import Icon, { type IconName } from './Icon';
 
 const items: { path: string; label: string; icon: IconName; admin?: boolean }[] = [
   { path: '/dashboard', label: 'Dashboard', icon: 'dashboard' },
+  { path: '/terminal', label: 'Terminal', icon: 'activity' },
   { path: '/portfolio', label: 'Portfolio', icon: 'briefcase' },
   { path: '/wallet', label: 'Wallet & Ledger', icon: 'wallet' },
   { path: '/profile', label: 'Profile & KYC', icon: 'user' },

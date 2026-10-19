@@ -16,7 +16,7 @@ interface Trade {
   gst: string;
   stampDuty: string;
   executedAt: string;
-  instrument: { symbol: string };
+    instrument: { id: string; symbol: string };
 }
 
 // Older trades only have a brokerage value; the other charge columns are 0 for them
@@ -34,7 +34,8 @@ function breakdown(t: Trade): string {
   );
 }
 
-function TradeBook({ refreshKey }: { refreshKey: number }) {
+// `instrumentId` limits the list to one stock (used by the terminal)
+function TradeBook({ refreshKey, instrumentId }: { refreshKey: number; instrumentId?: string }) {
   const { token } = useAuth();
   const [trades, setTrades] = useState<Trade[] | null>(null);
   const [error, setError] = useState('');
@@ -56,7 +57,8 @@ function TradeBook({ refreshKey }: { refreshKey: number }) {
     );
   }
   if (!trades) return <div className="skeleton" style={{ width: '100%', height: 120 }} />;
-  if (trades.length === 0) {
+  const shown = instrumentId ? trades.filter((t) => t.instrument.id === instrumentId) : trades;
+  if (shown.length === 0) {
     return (
       <div className="empty">
         <Icon name="repeat" size={32} />

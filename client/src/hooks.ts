@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from './context/AuthContext';
 import { apiFetch } from './api';
-import type { Quote } from './types';
+import type { Instrument, Quote } from './types';
 
 const LIVE_REFRESH_MS = 5000;
 const LIST_REFRESH_MS = 10000;
@@ -84,4 +84,45 @@ export function useQuotes(instrumentIds: string[]) {
   }, [key, token]);
 
   return quotes;
+}
+
+
+const SELECTED_KEY = 'selectedInstrument';
+const DEFAULT_SYMBOL = 'RELIANCE';
+
+function readSelected(): Instrument | null {
+  try {
+    const raw = localStorage.getItem(SELECTED_KEY);
+    return raw ? (JSON.parse(raw) as Instrument) : null;
+  } catch {
+    return null;
+  }
+}
+
+// The stock the user is looking at. It is remembered in the browser, so the dashboard and the
+// terminal open on the same stock. First visit opens RELIANCE.
+export function useSelectedInstrument() {
+  const { token } = useAuth();
+  const [selected, setSelected] = useState<Instrument | null>(readSelected);
+
+  const select = useCallback((instrument: Instrument) => {
+    setSelected(instrument);
+    try {
+      localStorage.setItem(SELECTED_KEY, JSON.stringify(instrument));
+    } catch {
+      // storage can be blocked; the choice just won't be remembered
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selected || !token) return;
+    apiFetch(`/api/instruments/search?q=${DEFAULT_SYMBOL}`, token)
+      .then((items: Instrument[]) => {
+        const match = items.find((i) => i.symbol.toUpperCase().startsWith(DEFAULT_SYMBOL)) ?? items[0];
+        if (match) select(match);
+      })
+      .catch(() => undefined);
+  }, [selected, token, select]);
+
+  return { selected, select };
 }

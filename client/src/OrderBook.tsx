@@ -16,7 +16,7 @@ interface Order {
   note?: string | null;
   status: string;
   createdAt: string;
-  instrument: { symbol: string; name?: string };
+  instrument: { id: string; symbol: string; name?: string };
 }
 
 const STATUS_BADGE: Record<string, string> = {
@@ -31,8 +31,8 @@ const ORDER_TYPE_LABEL: Record<string, string> = {
   take_profit: 'take-profit',
 };
 
-// `refreshKey` changes when an order is placed, so the list reloads straight away
-function OrderBook({ refreshKey }: { refreshKey: number }) {
+// `instrumentId` limits the list to one stock (used by the terminal)
+function OrderBook({ refreshKey, instrumentId }: { refreshKey: number; instrumentId?: string }) {
   const { token } = useAuth();
   const { refresh: refreshBalance } = useBalance();
   const [orders, setOrders] = useState<Order[] | null>(null);
@@ -69,6 +69,8 @@ function OrderBook({ refreshKey }: { refreshKey: number }) {
 
   if (!orders && !error) return <div className="skeleton" style={{ width: '100%', height: 120 }} />;
 
+  const shown = instrumentId ? (orders ?? []).filter((o) => o.instrument.id === instrumentId) : (orders ?? []);
+
   return (
     <>
       {error && (
@@ -76,7 +78,7 @@ function OrderBook({ refreshKey }: { refreshKey: number }) {
           <Icon name="alert-circle" size={16} /> {error}
         </div>
       )}
-      {orders && orders.length === 0 ? (
+      {orders && shown.length === 0 ? (
         <div className="empty">
           <Icon name="inbox" size={32} />
           No orders yet. Place your first order from the ticket above.
@@ -97,7 +99,7 @@ function OrderBook({ refreshKey }: { refreshKey: number }) {
               </tr>
             </thead>
             <tbody>
-              {(orders ?? []).map((o) => (
+              {shown.map((o) => (
                 <tr key={o.id}>
                   <td>
                     <div className="sym">

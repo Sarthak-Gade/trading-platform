@@ -1689,6 +1689,115 @@ select.input option {
   }
 }
 
+/* ---------- Trading terminal ---------- */
+.page-wide {
+  max-width: 1680px;
+}
+.terminal-grid {
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr) 350px;
+  grid-template-areas: 'left center right';
+  gap: 16px;
+  align-items: start;
+}
+.terminal-left,
+.terminal-center,
+.terminal-right {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.terminal-left {
+  grid-area: left;
+}
+.terminal-center {
+  grid-area: center;
+}
+.terminal-right {
+  grid-area: right;
+}
+.terminal-center .chart-box {
+  height: clamp(340px, 52vh, 560px);
+}
+
+/* The watchlist sits in a narrow column, so its rows and the new-list form need to shrink */
+.terminal-left .list-item {
+  gap: 8px;
+  padding: 10px;
+}
+.terminal-left .list-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.terminal-left .list-end {
+  flex-shrink: 0;
+}
+.terminal-left form.row {
+  width: 100%;
+}
+.terminal-left form.row .input {
+  flex: 1;
+  min-width: 0;
+  width: auto !important;
+}
+
+.kv-group {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.kv-title {
+  margin-bottom: 6px;
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.kv-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+}
+.kv-row:last-child {
+  border-bottom: none;
+}
+.kv-row b {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.kv-row b.up {
+  color: var(--green);
+}
+.kv-row b.down {
+  color: var(--red);
+}
+
+@media (max-width: 1360px) {
+  .terminal-grid {
+    grid-template-columns: minmax(0, 1fr) 350px;
+    grid-template-areas:
+      'center right'
+      'left left';
+  }
+}
+@media (max-width: 960px) {
+  .terminal-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'center'
+      'right'
+      'left';
+  }
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 1180px) {
   .trade-grid {
