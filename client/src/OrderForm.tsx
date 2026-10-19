@@ -16,17 +16,22 @@ function OrderForm({ instrument, quote, quoteError, onOrderPlaced }: Props) {
   const { token } = useAuth();
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [productType, setProductType] = useState<'CNC' | 'MIS'>('CNC');
-  const [orderType, setOrderType] = useState<'market' | 'limit'>('market');
+  const [orderType, setOrderType] = useState<'market' | 'limit' | 'stop_loss' | 'take_profit'>('market');
   const [qty, setQty] = useState(1);
   const [limitPrice, setLimitPrice] = useState('');
+  const [triggerPrice, setTriggerPrice] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [chargesResult, setChargesResult] = useState<{ key: string; data: Charges } | null>(null);
 
-  // The price this order would use: live price for market, typed price for limit
+  // The price this order would use: live price for market, typed price for limit, trigger price for SL / TP
   const limitValue = Number(limitPrice);
-  const effectivePrice = orderType === 'market' ? (quote?.price ?? null) : limitValue;
+  const triggerValue = Number(triggerPrice);
+  const isTrigger = orderType === 'stop_loss' || orderType === 'take_profit';
+  // Orders execute only in market hours; the server makes the final decision
+  const marketClosed = quote !== null && quote.marketState !== null && quote.marketState !== 'REGULAR';
+  const effectivePrice = orderType === 'market' ? (quote?.price ?? null) : isTrigger ? triggerValue : limitValue;
   const priceIsValid = effectivePrice !== null && Number.isFinite(effectivePrice) && effectivePrice > 0;
 
   // A breakdown only shows while it still matches the current inputs
@@ -63,14 +68,41 @@ function OrderForm({ instrument, quote, quoteError, onOrderPlaced }: Props) {
     if (quote) setLimitPrice(quote.price.toFixed(2));
   };
 
+  // Stop-loss and take-profit only sell, so switching to Buy goes back to a normal order
+  const chooseSide = (next: 'buy' | 'sell') => {
+    setSide(next);
+    if (next === 'buy' && isTrigger) setOrderType('market');
+  };
+
+  // Starts the trigger a little away from the live price, on the correct side for the order
+  const chooseTrigger = (kind: 'stop_loss' | 'take_profit') => {
+    setOrderType(kind);
+    if (!triggerPrice && quote) {
+      const start = kind === 'stop_loss' ? quote.price * 0.95 : quote.price * 1.05;
+      setTriggerPrice(start.toFixed(2));
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setMessage('');
 
     if (!priceIsValid) {
-      setError(orderType === 'market' ? 'Waiting for the live price…' : 'Enter a valid limit price');
+      setError(
+        orderType === 'market' ? 'Waiting for the live price…' : isTrigger ? 'Enter a valid trigger price' : 'Enter a valid limit price'
+      );
       return;
+    }
+    if (isTrigger && quote) {
+      if (orderType === 'stop_loss' && triggerValue >= quote.price) {
+        setError(`Stop-loss trigger must be below the current price (${inr(quote.price)})`);
+        return;
+      }
+      if (orderType === 'take_profit' && triggerValue <= quote.price) {
+        setError(`Take-profit trigger must be above the current price (${inr(quote.price)})`);
+        return;
+      }
     }
 
     setSubmitting(true);
@@ -85,17 +117,37 @@ function OrderForm({ instrument, quote, quoteError, onOrderPlaced }: Props) {
           qty,
           // Market orders are priced by the server from the live quote, so no price is sent
           ...(orderType === 'limit' ? { orderPrice: limitValue } : {}),
+          ...(isTrigger ? { triggerPrice: triggerValue } : {}),
           validity: 'DAY',
         }),
       });
 
-      const result = await apiFetch(`/api/orders/${order.id}/execute`, token, { method: 'POST' });
+      // Stop-loss and take-profit wait on the server until the price is reached
+      if (isTrigger) {
+        setMessage(
+          orderType === 'stop_loss'
+            ? `Stop-loss set: ${qty} ${instrument.symbol} will sell if the price falls to ${inr(triggerValue)}`
+            : `Take-profit set: ${qty} ${instrument.symbol} will sell if the price rises to ${inr(triggerValue)}`
+        );
+        onOrderPlaced();
+        return;
+      }
 
-      setMessage(
-        `${side === 'buy' ? 'Bought' : 'Sold'} ${qty} ${instrument.symbol} at ${inr(
-          Number(result.trade.pricePerShare)
-        )}`
-      );
+      if (order.trade) {
+        // Market orders, and limit orders already at their price, are filled when the server answers
+        setMessage(
+          `${side === 'buy' ? 'Bought' : 'Sold'} ${qty} ${instrument.symbol} at ${inr(
+            Number(order.trade.pricePerShare)
+          )}`
+        );
+      } else {
+        // A limit order waits until the market reaches its price
+        setMessage(
+          `Limit order placed: it will ${side === 'buy' ? 'buy' : 'sell'} ${qty} ${instrument.symbol} when the price ${
+            side === 'buy' ? 'falls to' : 'rises to'
+          } ${inr(limitValue)} or better`
+        );
+      }
       onOrderPlaced();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Order failed');
@@ -126,47 +178,66 @@ function OrderForm({ instrument, quote, quoteError, onOrderPlaced }: Props) {
       </div>
 
       <div className="seg" role="tablist" aria-label="Buy or sell">
-        <button type="button" className={`seg-btn${side === 'buy' ? ' active buy' : ''}`} onClick={() => setSide('buy')}>
+        <button type="button" className={`seg-btn${side === 'buy' ? ' active buy' : ''}`} onClick={() => chooseSide('buy')}>
           Buy
         </button>
-        <button type="button" className={`seg-btn${side === 'sell' ? ' active sell' : ''}`} onClick={() => setSide('sell')}>
+        <button type="button" className={`seg-btn${side === 'sell' ? ' active sell' : ''}`} onClick={() => chooseSide('sell')}>
           Sell
         </button>
       </div>
 
-      <div className="two-col">
-        <div className="field">
-          <span className="label">Product</span>
-          <div className="seg">
-            <button type="button" className={`seg-btn${productType === 'CNC' ? ' active' : ''}`} onClick={() => setProductType('CNC')} title="Delivery">
-              CNC
-            </button>
-            <button type="button" className={`seg-btn${productType === 'MIS' ? ' active' : ''}`} onClick={() => setProductType('MIS')} title="Intraday">
-              MIS
-            </button>
-          </div>
+      <div className="field">
+        <span className="label">Product</span>
+        <div className="seg">
+          <button type="button" className={`seg-btn${productType === 'CNC' ? ' active' : ''}`} onClick={() => setProductType('CNC')} title="Delivery">
+            CNC
+          </button>
+          <button type="button" className={`seg-btn${productType === 'MIS' ? ' active' : ''}`} onClick={() => setProductType('MIS')} title="Intraday">
+            MIS
+          </button>
         </div>
-        <div className="field">
-          <span className="label">Order type</span>
-          <div className="seg">
-            <button
-              type="button"
-              className={`seg-btn${orderType === 'market' ? ' active' : ''}`}
-              onClick={() => setOrderType('market')}
-            >
-              Market
-            </button>
-            <button
-              type="button"
-              className={`seg-btn${orderType === 'limit' ? ' active' : ''}`}
-              onClick={() => {
-                setOrderType('limit');
-                if (!limitPrice) fillMarketPrice();
-              }}
-            >
-              Limit
-            </button>
-          </div>
+      </div>
+
+      <div className="field">
+        <span className="label">Order type</span>
+        <div className="seg">
+          <button
+            type="button"
+            className={`seg-btn${orderType === 'market' ? ' active' : ''}`}
+            onClick={() => setOrderType('market')}
+          >
+            Market
+          </button>
+          <button
+            type="button"
+            className={`seg-btn${orderType === 'limit' ? ' active' : ''}`}
+            onClick={() => {
+              setOrderType('limit');
+              if (!limitPrice) fillMarketPrice();
+            }}
+          >
+            Limit
+          </button>
+          {side === 'sell' && (
+            <>
+              <button
+                type="button"
+                className={`seg-btn${orderType === 'stop_loss' ? ' active' : ''}`}
+                onClick={() => chooseTrigger('stop_loss')}
+                title="Sell automatically if the price falls to your trigger"
+              >
+                Stop-loss
+              </button>
+              <button
+                type="button"
+                className={`seg-btn${orderType === 'take_profit' ? ' active' : ''}`}
+                onClick={() => chooseTrigger('take_profit')}
+                title="Sell automatically if the price rises to your trigger"
+              >
+                Take-profit
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -193,10 +264,20 @@ function OrderForm({ instrument, quote, quoteError, onOrderPlaced }: Props) {
         </div>
         <div className="field">
           <label className="label" htmlFor="price">
-            {orderType === 'market' ? 'Price (live)' : 'Limit price (₹)'}
+            {orderType === 'market' ? 'Price (live)' : isTrigger ? 'Trigger price (₹)' : 'Limit price (₹)'}
           </label>
           {orderType === 'market' ? (
             <input id="price" className="input" disabled value={quote ? quote.price.toFixed(2) : 'At market'} />
+          ) : isTrigger ? (
+            <input
+              id="price"
+              className="input"
+              type="number"
+              min={0}
+              step="0.05"
+              value={triggerPrice}
+              onChange={(e) => setTriggerPrice(e.target.value)}
+            />
           ) : (
             <input
               id="price"
@@ -223,6 +304,25 @@ function OrderForm({ instrument, quote, quoteError, onOrderPlaced }: Props) {
           </button>
         )}
       </div>
+
+      {marketClosed && (
+        <div className="notice notice-info">
+          <Icon name="alert-circle" size={16} />
+          {orderType === 'market'
+            ? 'The market is closed. Market orders cannot execute now. Use a limit order and it will wait for the open.'
+            : 'The market is closed. This order will be placed and can execute only once the market opens.'}
+        </div>
+      )}
+
+      {isTrigger && (
+        <div className="notice notice-info">
+          <Icon name="alert-circle" size={16} />
+          {orderType === 'stop_loss'
+            ? 'Sells at the market price once the price falls to the trigger. It can fill below the trigger if the price drops fast.'
+            : 'Sells at the market price once the price rises to the trigger.'}
+          {' '}The shares stay reserved until it fires or you cancel it.
+        </div>
+      )}
 
       {charges ? (
         <details className="charges">
@@ -270,7 +370,11 @@ function OrderForm({ instrument, quote, quoteError, onOrderPlaced }: Props) {
         className={`btn btn-lg btn-block ${side === 'buy' ? 'btn-buy' : 'btn-sell'}`}
         disabled={submitting || !priceIsValid}
       >
-        {submitting ? 'Placing order…' : `${side === 'buy' ? 'Buy' : 'Sell'} ${qty} ${instrument.symbol}`}
+        {submitting
+          ? 'Placing order…'
+          : isTrigger
+            ? `Set ${orderType === 'stop_loss' ? 'stop-loss' : 'take-profit'} on ${qty} ${instrument.symbol}`
+            : `${side === 'buy' ? 'Buy' : 'Sell'} ${qty} ${instrument.symbol}`}
       </button>
     </form>
   );

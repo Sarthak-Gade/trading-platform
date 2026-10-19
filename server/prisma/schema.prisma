@@ -121,12 +121,16 @@ model Instrument {
 model Order {
   id           String   @id @default(uuid())
   type         String   // "buy" | "sell"
-  orderType    String   // "market" | "limit" | "GTT" | "AMO"
+  orderType    String   // "market" | "limit" | "stop_loss" | "take_profit"
   productType  String   @default("CNC") // "CNC" (delivery) | "MIS" (intraday) | "NRML" (F&O carry)
   qty          Int
   orderPrice   Decimal
   status       String   @default("pending") // pending | executed | cancelled
-  validity     String   // "DAY" | "IOC"
+  validity     String   // "DAY" | "IOC" | "GTC" (stop-loss and take-profit stay until filled or cancelled)
+  // Stop-loss and take-profit orders only: the price that fires the order, when it fired, and why it was cancelled
+  triggerPrice Decimal?
+  triggeredAt  DateTime?
+  note         String?
   createdAt    DateTime @default(now())
   user         User       @relation(fields: [userId], references: [id])
   userId       String

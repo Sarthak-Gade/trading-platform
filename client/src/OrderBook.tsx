@@ -12,6 +12,8 @@ interface Order {
   productType: string;
   qty: number;
   orderPrice: string;
+  triggerPrice?: string | null;
+  note?: string | null;
   status: string;
   createdAt: string;
   instrument: { symbol: string; name?: string };
@@ -22,6 +24,11 @@ const STATUS_BADGE: Record<string, string> = {
   pending: 'badge-amber',
   cancelled: 'badge-gray',
   rejected: 'badge-red',
+};
+
+const ORDER_TYPE_LABEL: Record<string, string> = {
+  stop_loss: 'stop-loss',
+  take_profit: 'take-profit',
 };
 
 // `refreshKey` changes when an order is placed, so the list reloads straight away
@@ -102,12 +109,18 @@ function OrderBook({ refreshKey }: { refreshKey: number }) {
                     {o.type}
                   </td>
                   <td>
-                    {o.productType} · <span className="muted">{o.orderType}</span>
+                    {o.productType} · <span className="muted">{ORDER_TYPE_LABEL[o.orderType] ?? o.orderType}</span>
                   </td>
                   <td className="num">{o.qty}</td>
-                  <td className="num">{inr(Number(o.orderPrice))}</td>
+                                    <td className="num">
+                    {inr(Number(o.orderPrice))}
+                    {o.triggerPrice && o.status === 'pending' && (
+                      <div className="muted" style={{ fontSize: 11 }}>trigger {inr(Number(o.triggerPrice))}</div>
+                    )}
+                  </td>
                   <td>
                     <span className={`badge ${STATUS_BADGE[o.status] ?? 'badge-gray'}`}>{o.status}</span>
+                    {o.note && <div className="muted" style={{ fontSize: 11, maxWidth: 180 }}>{o.note}</div>}
                   </td>
                   <td className="muted nowrap">{formatDateTime(o.createdAt)}</td>
                   <td className="num">

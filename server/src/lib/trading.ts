@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { Response } from 'express';
 
-const ORDER_TYPES = ['market', 'limit'];
+const ORDER_TYPES = ['market', 'limit', 'stop_loss', 'take_profit'];
 const PRODUCT_TYPES = ['CNC', 'MIS', 'NRML'];
 const VALIDITIES = ['DAY', 'IOC'];
 const MAX_QTY = 100000;
@@ -14,6 +14,12 @@ export class HttpError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+// True while the exchange is in its normal trading session. For testing outside market hours,
+// set IGNORE_MARKET_HOURS=true in server/.env (never on a real server).
+export function marketIsOpen(marketState: string | null): boolean {
+  return process.env.IGNORE_MARKET_HOURS === 'true' || marketState === 'REGULAR';
 }
 
 export function roundMoney(n: number): number {
@@ -45,6 +51,8 @@ export interface ValidOrder {
   qty: number;
   // Only set for limit orders. Market orders are priced by the server from the live quote.
   orderPrice: number | null;
+  // Only set for stop-loss and take-profit orders
+  triggerPrice: number | null;
   validity: string;
 }
 
@@ -52,7 +60,7 @@ export function validateOrderInput(
   body: unknown
 ): { ok: true; value: ValidOrder } | { ok: false; error: string } {
   const b = (body ?? {}) as Record<string, unknown>;
-  const { instrumentId, type, orderType, qty, orderPrice } = b;
+  const { instrumentId, type, orderType, qty, orderPrice, triggerPrice } = b;
   const productType = b.productType ?? 'CNC';
   const validity = b.validity ?? 'DAY';
 
@@ -74,9 +82,19 @@ export function validateOrderInput(
   if (typeof qty !== 'number' || !Number.isInteger(qty) || qty <= 0 || qty > MAX_QTY) {
     return { ok: false, error: `qty must be a whole number between 1 and ${MAX_QTY}` };
   }
+  const isTrigger = orderType === 'stop_loss' || orderType === 'take_profit';
+  if (isTrigger) {
+    // They protect shares you already hold, so they are sell-only
+    if (type !== 'sell') {
+      return { ok: false, error: 'Stop-loss and take-profit orders can only be placed as sell orders' };
+    }
+    if (typeof triggerPrice !== 'number' || !Number.isFinite(triggerPrice) || triggerPrice <= 0 || triggerPrice > MAX_PRICE) {
+      return { ok: false, error: 'triggerPrice must be a positive number' };
+    }
+  }
   // Limit orders must carry a price. For market orders any price sent is ignored,
   // but if one is sent it still has to be sane.
-  if (orderType === 'limit' || orderPrice !== undefined) {
+  if (!isTrigger && (orderType === 'limit' || orderPrice !== undefined)) {
     if (typeof orderPrice !== 'number' || !Number.isFinite(orderPrice) || orderPrice <= 0 || orderPrice > MAX_PRICE) {
       return { ok: false, error: 'orderPrice must be a positive number' };
     }
@@ -90,7 +108,8 @@ export function validateOrderInput(
       orderType,
       productType,
       qty,
-      orderPrice: typeof orderPrice === 'number' ? roundMoney(orderPrice) : null,
+      orderPrice: !isTrigger && typeof orderPrice === 'number' ? roundMoney(orderPrice) : null,
+      triggerPrice: isTrigger ? roundMoney(triggerPrice as number) : null,
       validity,
     },
   };
