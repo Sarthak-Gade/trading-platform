@@ -17,6 +17,7 @@ import WalletPage from './WalletPage';
 import ProfilePage from './ProfilePage';
 import Admin from './Admin';
 import './index.css';
+import Journal from './Journal';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -35,6 +36,7 @@ createRoot(document.getElementById('root')!).render(
                 <Route path="/terminal" element={<Terminal />} />
                 <Route path="/portfolio" element={<Portfolio />} />
                 <Route path="/wallet" element={<WalletPage />} />
+                <Route path="/journal" element={<Journal />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route element={<AdminRoute />}>
                   <Route path="/admin" element={<Admin />} />

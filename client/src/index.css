@@ -1881,3 +1881,253 @@ select.input option {
     font-size: 30px;
   }
 }
+/* ---------- Trading Journal ---------- */
+.journal {
+  padding: 24px;
+  max-width: 920px;
+}
+.journal-head h2 {
+  margin: 0 0 4px;
+}
+.journal-head p {
+  margin: 0 0 20px;
+  color: var(--muted, #8b90a3);
+  font-size: 14px;
+}
+
+.journal-form {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 28px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border, #2a2e3f);
+  border-radius: 12px;
+}
+.journal-form h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.journal-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.journal-field {
+  display: grid;
+  gap: 6px;
+}
+.journal-field > span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted, #8b90a3);
+}
+.journal-field.lesson > span {
+  color: var(--green);
+}
+
+.journal input,
+.journal select,
+.journal textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  border: 1px solid var(--border, #2a2e3f);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.journal textarea {
+  resize: vertical;
+  min-height: 64px;
+}
+.journal input:focus,
+.journal select:focus,
+.journal textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(79, 140, 255, 0.18);
+}
+.journal ::placeholder {
+  color: var(--muted, #6b7085);
+}
+
+.journal-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.jbtn {
+  padding: 9px 16px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: filter 0.15s, background 0.15s;
+}
+.jbtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.jbtn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.jbtn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.jbtn-ghost {
+  background: transparent;
+  color: inherit;
+  border-color: var(--border, #2a2e3f);
+}
+.jbtn-ghost:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.jbtn-danger {
+  background: transparent;
+  color: var(--red);
+  border-color: rgba(239, 83, 80, 0.35);
+}
+.jbtn-danger:hover {
+  background: rgba(239, 83, 80, 0.12);
+}
+
+.journal-error {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--red);
+  background: rgba(239, 83, 80, 0.1);
+  border: 1px solid rgba(239, 83, 80, 0.3);
+  border-radius: 8px;
+}
+.journal-empty {
+  padding: 36px 16px;
+  text-align: center;
+  color: var(--muted, #8b90a3);
+  background: var(--surface);
+  border: 1px dashed var(--border, #2a2e3f);
+  border-radius: 12px;
+}
+
+.j-entry {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border, #2a2e3f);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+}
+.j-entry.buy {
+  border-left-color: var(--green);
+}
+.j-entry.sell {
+  border-left-color: var(--red);
+}
+.j-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.j-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.j-symbol {
+  font-size: 15px;
+  font-weight: 700;
+}
+.j-badge {
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  border-radius: 6px;
+}
+.j-badge.buy {
+  color: var(--green);
+  background: rgba(38, 166, 154, 0.16);
+}
+.j-badge.sell {
+  color: var(--red);
+  background: rgba(239, 83, 80, 0.16);
+}
+.j-badge.note {
+  color: var(--accent);
+  background: rgba(79, 140, 255, 0.16);
+}
+.j-detail {
+  font-size: 13px;
+  color: var(--muted, #8b90a3);
+}
+.j-tag {
+  padding: 2px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: rgba(79, 140, 255, 0.12);
+  border: 1px solid rgba(79, 140, 255, 0.3);
+  border-radius: 999px;
+}
+.j-date {
+  font-size: 12px;
+  color: var(--muted, #8b90a3);
+}
+
+.j-blocks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.j-block {
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border, #2a2e3f);
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.j-block.wide {
+  grid-column: 1 / -1;
+}
+.j-block > span {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted, #8b90a3);
+}
+.j-block.lesson {
+  background: rgba(38, 166, 154, 0.08);
+  border-color: rgba(38, 166, 154, 0.3);
+}
+.j-block.lesson > span {
+  color: var(--green);
+}
+.j-entry-actions {
+  display: flex;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .journal-row,
+  .j-blocks {
+    grid-template-columns: 1fr;
+  }
+}

@@ -40,6 +40,7 @@ model User {
   balance      Balance?
   transactions Transaction[]
   otpCodes     OtpCode[]
+  journals Journal[]
 }
 
 // One-time codes for email verification, mobile verification and password reset.
@@ -159,6 +160,7 @@ model Trade {
   instrumentId String
   order        Order      @relation(fields: [orderId], references: [id])
   orderId      String
+  ournals Journal[]
 }
 
 model Position {
@@ -236,4 +238,22 @@ model Alert {
   userId       String
   instrument   Instrument @relation(fields: [instrumentId], references: [id])
   instrumentId String
+}
+
+model Journal {
+  id          String   @id @default(uuid())
+  userId      String
+  tradeId     String?
+  strategy    String?
+  entryReason String?
+  exitReason  String?
+  notes       String?
+  learnings   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trade Trade? @relation(fields: [tradeId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
 }

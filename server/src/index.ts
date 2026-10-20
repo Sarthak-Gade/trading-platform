@@ -910,6 +910,129 @@ app.get('/api/me/transactions', requireAuth, async (req: AuthRequest, res: Respo
   }
 });
 
+// ---------- Trading Journal ----------
+// ---------- Trading Journal ----------
+const JOURNAL_TEXT_FIELDS = ['strategy', 'entryReason', 'exitReason', 'notes', 'learnings'] as const;
+
+// undefined = field not sent; null = sent but empty; string = trimmed value
+function cleanText(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim().slice(0, 2000);
+  return trimmed === '' ? null : trimmed;
+}
+
+const journalInclude = {
+  trade: { include: { instrument: true, order: true } },
+} as const;
+
+app.post('/api/me/journal', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    const strategy = cleanText(body.strategy) ?? null;
+    const entryReason = cleanText(body.entryReason) ?? null;
+    const exitReason = cleanText(body.exitReason) ?? null;
+    const notes = cleanText(body.notes) ?? null;
+    const learnings = cleanText(body.learnings) ?? null;
+
+    if ([strategy, entryReason, exitReason, notes, learnings].every((v) => v === null)) {
+      return res.status(400).json({ error: 'Write at least one field' });
+    }
+
+    let tradeId: string | null = null;
+    if (typeof body.tradeId === 'string' && body.tradeId !== '') {
+      // Ownership check: you can only journal your own trades
+      const trade = await prisma.trade.findFirst({ where: { id: body.tradeId, userId } });
+      if (!trade) {
+        return res.status(404).json({ error: 'Trade not found' });
+      }
+      tradeId = trade.id;
+    }
+
+    const entry = await prisma.journal.create({
+      data: { userId, tradeId, strategy, entryReason, exitReason, notes, learnings },
+      include: journalInclude,
+    });
+
+    res.status(201).json(entry);
+  } catch (error) {
+    sendError(res, error, 'saving the journal entry');
+  }
+});
+
+app.get('/api/me/journal', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+
+    const entries = await prisma.journal.findMany({
+      where: { userId },
+      include: journalInclude,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(entries);
+  } catch (error) {
+    sendError(res, error, 'fetching the journal');
+  }
+});
+
+app.patch('/api/me/journal/:id', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const rawId = req.params.id;
+
+    if (!rawId || Array.isArray(rawId)) {
+      return res.status(400).json({ error: 'Journal entry ID is required' });
+    }
+
+    const existing = await prisma.journal.findFirst({ where: { id: rawId, userId } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Entry not found' });
+    }
+
+    // Whitelist: only the text fields. userId and tradeId can never change here.
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const data: Prisma.JournalUpdateInput = {};
+    for (const f of JOURNAL_TEXT_FIELDS) {
+      const v = cleanText(body[f]);
+      if (v !== undefined) data[f] = v;
+    }
+
+    const updated = await prisma.journal.update({
+      where: { id: rawId },
+      data,
+      include: journalInclude,
+    });
+
+    res.json(updated);
+  } catch (error) {
+    sendError(res, error, 'updating the journal entry');
+  }
+});
+
+app.delete('/api/me/journal/:id', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const rawId = req.params.id;
+
+    if (!rawId || Array.isArray(rawId)) {
+      return res.status(400).json({ error: 'Journal entry ID is required' });
+    }
+
+    // One query checks ownership and deletes
+    const result = await prisma.journal.deleteMany({ where: { id: rawId, userId } });
+    if (result.count === 0) {
+      return res.status(404).json({ error: 'Entry not found' });
+    }
+
+    res.json({ message: 'Journal entry deleted' });
+  } catch (error) {
+    sendError(res, error, 'deleting the journal entry');
+  }
+});
+
 // Last resort for errors Express raises itself, such as a malformed or oversized JSON body
 app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) return next(err);

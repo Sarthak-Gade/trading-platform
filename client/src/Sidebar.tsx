@@ -7,6 +7,7 @@ const items: { path: string; label: string; icon: IconName; admin?: boolean }[] 
   { path: '/dashboard', label: 'Dashboard', icon: 'dashboard' },
   { path: '/terminal', label: 'Terminal', icon: 'activity' },
   { path: '/portfolio', label: 'Portfolio', icon: 'briefcase' },
+  { path: '/journal', label: 'Trading Journal', icon: 'book' },
   { path: '/wallet', label: 'Wallet & Ledger', icon: 'wallet' },
   { path: '/profile', label: 'Profile & KYC', icon: 'user' },
   { path: '/admin', label: 'Admin', icon: 'shield', admin: true },
