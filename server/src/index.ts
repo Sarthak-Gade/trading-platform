@@ -1033,6 +1033,310 @@ app.delete('/api/me/journal/:id', requireAuth, async (req: AuthRequest, res: Res
   }
 });
 
+// ---------- IPO bidding (simulated) ----------
+const IPO_RETAIL_LIMIT = 200000;        // max bid value per application, like real retail IPOs
+const IPO_ALLOTMENT_PROBABILITY = 0.5;  // simulated lottery: each eligible application has this chance
+
+type IpoPhase = 'upcoming' | 'open' | 'closed' | 'allotted';
+
+// Status is derived from the dates; only "allotted" is stored
+function ipoPhase(ipo: { status: string; openDate: Date; closeDate: Date }): IpoPhase {
+  if (ipo.status === 'allotted') return 'allotted';
+  const now = new Date();
+  if (now < ipo.openDate) return 'upcoming';
+  if (now <= ipo.closeDate) return 'open';
+  return 'closed';
+}
+
+function parseDate(value: unknown): Date | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// Admin: create an IPO for an existing instrument
+app.post('/api/admin/ipos', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const instrumentId = typeof body.instrumentId === 'string' ? body.instrumentId : '';
+    const priceMin = Number(body.priceMin);
+    const priceMax = Number(body.priceMax);
+    const lotSize = Number(body.lotSize);
+    const openDate = parseDate(body.openDate);
+    const closeDate = parseDate(body.closeDate);
+
+    if (!instrumentId) throw new HttpError(400, 'instrumentId is required');
+    if (!Number.isFinite(priceMin) || !Number.isFinite(priceMax) || priceMin <= 0 || priceMax < priceMin) {
+      throw new HttpError(400, 'Price band is invalid: priceMax must be at least priceMin, both above 0');
+    }
+    if (!Number.isInteger(lotSize) || lotSize < 1 || lotSize > 10000) {
+      throw new HttpError(400, 'lotSize must be a whole number between 1 and 10000');
+    }
+    if (!openDate || !closeDate || closeDate <= openDate) {
+      throw new HttpError(400, 'Valid openDate and closeDate are required, and closeDate must be after openDate');
+    }
+
+    const instrument = await prisma.instrument.findUnique({ where: { id: instrumentId } });
+    if (!instrument) throw new HttpError(404, 'Instrument not found');
+
+    const ipo = await prisma.ipo.create({
+      data: { instrumentId, priceMin, priceMax, lotSize, openDate, closeDate },
+      include: { instrument: true },
+    });
+    res.status(201).json(ipo);
+  } catch (error) {
+    sendError(res, error, 'creating the IPO');
+  }
+});
+
+// All IPOs, each with the current user's application (if any)
+app.get('/api/ipos', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const ipos = await prisma.ipo.findMany({
+      orderBy: { openDate: 'desc' },
+      include: { instrument: true, applications: { where: { userId } } },
+    });
+    res.json(
+      ipos.map(({ applications, ...ipo }) => ({
+        ...ipo,
+        phase: ipoPhase(ipo),
+        myApplication: applications[0] ?? null,
+      }))
+    );
+  } catch (error) {
+    sendError(res, error, 'fetching IPOs');
+  }
+});
+
+app.get('/api/me/ipo-applications', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const applications = await prisma.ipoApplication.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      include: { ipo: { include: { instrument: true } } },
+    });
+    res.json(applications);
+  } catch (error) {
+    sendError(res, error, 'fetching IPO applications');
+  }
+});
+
+// Apply: blocks the bid amount from the balance, like a UPI mandate
+app.post('/api/ipos/:ipoId/apply', requireAuth, moneyLimiter, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const rawIpoId = req.params.ipoId;
+    if (!rawIpoId || Array.isArray(rawIpoId)) throw new HttpError(400, 'IPO ID is required');
+    const ipoId: string = rawIpoId;
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const lots = Number(body.lots);
+    const bidPrice = Number(body.bidPrice);
+    if (!Number.isInteger(lots) || lots < 1) throw new HttpError(400, 'lots must be a whole number, at least 1');
+    if (!Number.isFinite(bidPrice) || bidPrice <= 0) throw new HttpError(400, 'bidPrice must be a positive number');
+
+    const application = await prisma.$transaction(async (tx) => {
+      const ipo = await tx.ipo.findUnique({ where: { id: ipoId }, include: { instrument: true } });
+      if (!ipo) throw new HttpError(404, 'IPO not found');
+      if (ipoPhase(ipo) !== 'open') throw new HttpError(400, 'This IPO is not open for bidding');
+
+      const min = Number(ipo.priceMin);
+      const max = Number(ipo.priceMax);
+      if (bidPrice < min || bidPrice > max) {
+        throw new HttpError(400, `Bid price must be within the price band ₹${min} to ₹${max}`);
+      }
+
+      const qty = lots * ipo.lotSize;
+      const amount = roundMoney(qty * bidPrice);
+      if (amount > IPO_RETAIL_LIMIT) {
+        throw new HttpError(400, `Retail bids are limited to ₹${IPO_RETAIL_LIMIT.toLocaleString('en-IN')} per application`);
+      }
+
+      const existing = await tx.ipoApplication.findUnique({ where: { userId_ipoId: { userId, ipoId } } });
+      if (existing) throw new HttpError(409, 'You have already applied to this IPO');
+
+      // Atomic check-and-block, same pattern as order placement
+      const blocked = await tx.balance.updateMany({
+        where: { userId, availableBalance: { gte: amount } },
+        data: { availableBalance: { decrement: amount } },
+      });
+      if (blocked.count === 0) throw new HttpError(400, 'Insufficient balance to place this bid');
+
+      const balance = await tx.balance.findUniqueOrThrow({ where: { userId } });
+      await recordTransaction(
+        tx,
+        userId,
+        'ipo_debit',
+        `Blocked funds for ${ipo.instrument.symbol} IPO bid (${lots} lot${lots > 1 ? 's' : ''}, ${qty} shares @ ₹${bidPrice})`,
+        -amount,
+        Number(balance.availableBalance)
+      );
+
+      return tx.ipoApplication.create({
+        data: { userId, ipoId, lots, qty, bidPrice, fundsBlocked: amount },
+      });
+    });
+
+    res.status(201).json(application);
+  } catch (error) {
+    sendError(res, error, 'submitting the IPO bid');
+  }
+});
+
+// Cancel your own application while the IPO is still open: funds are released
+app.post('/api/ipos/:ipoId/cancel', requireAuth, moneyLimiter, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const rawIpoId = req.params.ipoId;
+    if (!rawIpoId || Array.isArray(rawIpoId)) throw new HttpError(400, 'IPO ID is required');
+    const ipoId: string = rawIpoId;
+
+    await prisma.$transaction(async (tx) => {
+      const ipo = await tx.ipo.findUnique({ where: { id: ipoId }, include: { instrument: true } });
+      if (!ipo) throw new HttpError(404, 'IPO not found');
+      if (ipoPhase(ipo) !== 'open') throw new HttpError(400, 'Applications can only be cancelled while the IPO is open');
+
+      const application = await tx.ipoApplication.findUnique({ where: { userId_ipoId: { userId, ipoId } } });
+      if (!application) throw new HttpError(404, 'You have not applied to this IPO');
+
+      // Claim the cancellation so it can only happen once
+      const claimed = await tx.ipoApplication.updateMany({
+        where: { id: application.id, status: 'applied' },
+        data: { status: 'cancelled' },
+      });
+      if (claimed.count === 0) throw new HttpError(400, `Application is already ${application.status}`);
+
+      const refund = Number(application.fundsBlocked);
+      const balance = await tx.balance.update({
+        where: { userId },
+        data: { availableBalance: { increment: refund } },
+      });
+      await recordTransaction(
+        tx,
+        userId,
+        'ipo_credit',
+        `Released blocked funds for cancelled ${ipo.instrument.symbol} IPO bid`,
+        refund,
+        Number(balance.availableBalance)
+      );
+    });
+
+    res.json({ message: 'Application cancelled and funds released' });
+  } catch (error) {
+    sendError(res, error, 'cancelling the IPO application');
+  }
+});
+
+// Admin: run the simulated allotment. Everything happens in one transaction, so it is all-or-nothing.
+app.post('/api/admin/ipos/:ipoId/allot', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const rawIpoId = req.params.ipoId;
+    if (!rawIpoId || Array.isArray(rawIpoId)) throw new HttpError(400, 'IPO ID is required');
+    const ipoId: string = rawIpoId;
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    const summary = await prisma.$transaction(
+      async (tx) => {
+        const ipo = await tx.ipo.findUnique({ where: { id: ipoId }, include: { instrument: true } });
+        if (!ipo) throw new HttpError(404, 'IPO not found');
+
+        const phase = ipoPhase(ipo);
+        if (phase === 'allotted') throw new HttpError(400, 'Allotment has already been done for this IPO');
+        if (phase !== 'closed') throw new HttpError(400, 'Allotment can only run after the IPO has closed');
+
+        // The final issue price defaults to the top of the band, like a cut-off price
+        const issuePrice = body.issuePrice === undefined ? Number(ipo.priceMax) : Number(body.issuePrice);
+        if (!Number.isFinite(issuePrice) || issuePrice < Number(ipo.priceMin) || issuePrice > Number(ipo.priceMax)) {
+          throw new HttpError(400, 'issuePrice must be inside the price band');
+        }
+
+        // Claim the allotment so two admins cannot run it twice
+        const claimed = await tx.ipo.updateMany({
+          where: { id: ipoId, status: 'scheduled' },
+          data: { status: 'allotted', issuePrice },
+        });
+        if (claimed.count === 0) throw new HttpError(400, 'Allotment has already been done for this IPO');
+
+        const applications = await tx.ipoApplication.findMany({ where: { ipoId, status: 'applied' } });
+        const symbol = ipo.instrument.symbol;
+        let allotted = 0;
+        let notAllotted = 0;
+
+        for (const app of applications) {
+                    // Claim the application first, so a bid can never be paid out twice
+          const claimedApp = await tx.ipoApplication.updateMany({
+            where: { id: app.id, status: 'applied' },
+            data: { status: 'allotted' },
+          });
+          if (claimedApp.count === 0) continue;
+          const blocked = Number(app.fundsBlocked);
+          // A bid below the final issue price is not eligible; otherwise it enters the lottery
+          const eligible = Number(app.bidPrice) >= issuePrice;
+          const wins = eligible && Math.random() < IPO_ALLOTMENT_PROBABILITY;
+
+          if (wins) {
+            const cost = roundMoney(app.qty * issuePrice);
+            const refund = roundMoney(blocked - cost);
+
+            if (refund > 0) {
+              const balance = await tx.balance.update({
+                where: { userId: app.userId },
+                data: { availableBalance: { increment: refund } },
+              });
+              await recordTransaction(
+                tx, app.userId, 'ipo_credit',
+                `Refund of excess bid amount, ${symbol} IPO allotted at ₹${issuePrice}`,
+                refund, Number(balance.availableBalance)
+              );
+            }
+
+            const holding = await tx.holding.findFirst({ where: { userId: app.userId, instrumentId: ipo.instrumentId } });
+            if (holding) {
+              await tx.holding.update({
+                where: { id: holding.id },
+                data: {
+                  qty: { increment: app.qty },
+                  investedValue: { increment: cost },
+                  currentValue: { increment: cost },
+                },
+              });
+            } else {
+              await tx.holding.create({
+                data: { userId: app.userId, instrumentId: ipo.instrumentId, qty: app.qty, investedValue: cost, currentValue: cost },
+              });
+            }
+
+            await tx.ipoApplication.update({ where: { id: app.id }, data: { status: 'allotted' } });
+            allotted++;
+          } else {
+            const balance = await tx.balance.update({
+              where: { userId: app.userId },
+              data: { availableBalance: { increment: blocked } },
+            });
+            await recordTransaction(
+              tx, app.userId, 'ipo_credit',
+              `Refund for ${symbol} IPO bid: ${eligible ? 'not allotted in the lottery' : 'bid was below the issue price'}`,
+              blocked, Number(balance.availableBalance)
+            );
+            await tx.ipoApplication.update({ where: { id: app.id }, data: { status: 'not_allotted' } });
+            notAllotted++;
+          }
+        }
+
+        return { symbol, issuePrice, applications: applications.length, allotted, notAllotted };
+      },
+      { timeout: 60000, maxWait: 10000 }
+    );
+
+    res.json(summary);
+  } catch (error) {
+    sendError(res, error, 'running the IPO allotment');
+  }
+});
+
 // Last resort for errors Express raises itself, such as a malformed or oversized JSON body
 app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) return next(err);
@@ -1042,6 +1346,8 @@ app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
   console.error('Unhandled error:', err);
   res.status(e.status && e.status >= 400 && e.status < 600 ? e.status : 500).json({ error: 'Something went wrong' });
 });
+
+
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
