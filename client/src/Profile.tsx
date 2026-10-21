@@ -11,6 +11,8 @@ interface Account {
   occupation: string;
   incomeRange: string;
   uniqueClientCode: string;
+  kycStatus: string;
+  kycNote: string | null;
 }
 
 const INCOME = ['0-5L', '5-10L', '10-25L', '25L+'];
@@ -79,7 +81,31 @@ function Profile() {
     <form className="card stack" onSubmit={save}>
       <div className="card-head" style={{ marginBottom: 0 }}>
         <span className="card-title">{notFound ? 'Complete your KYC' : 'KYC profile'}</span>
-        {account && <span className="badge badge-green">Client {account.uniqueClientCode}</span>}
+        {account && (
+          <span
+            className={`badge ${
+              account.kycStatus === 'verified' ? 'badge-green' : account.kycStatus === 'rejected' ? 'badge-red' : 'badge-amber'
+            }`}
+          >
+            KYC {account.kycStatus} · {account.uniqueClientCode}
+          </span>
+        )}
+        {notFound && (
+        <div className="notice notice-warn">
+          <Icon name="alert-circle" size={16} /> You cannot trade until your KYC is submitted and verified.
+        </div>
+      )}
+      {account?.kycStatus === 'pending' && (
+        <div className="notice notice-info">
+          <Icon name="clock" size={16} /> Your KYC is waiting for verification. Trading unlocks once it is approved.
+        </div>
+      )}
+      {account?.kycStatus === 'rejected' && (
+        <div className="notice notice-error">
+          <Icon name="alert-circle" size={16} /> KYC rejected{account.kycNote ? `: ${account.kycNote}` : ''}. Update your
+          details below and save to resubmit.
+        </div>
+      )}
       </div>
 
       {account && (

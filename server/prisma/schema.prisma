@@ -91,6 +91,9 @@ model Account {
   occupation       String?
   incomeRange      String?
   uniqueClientCode String   @unique
+  kycStatus        String    @default("pending") // pending | verified | rejected
+  kycNote          String?   // the reviewer's reason when rejected
+  kycReviewedAt    DateTime?
 
   user   User   @relation(fields: [userId], references: [id])
   userId String @unique

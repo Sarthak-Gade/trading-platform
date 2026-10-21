@@ -12,6 +12,7 @@ const items: { path: string; label: string; icon: IconName; admin?: boolean }[] 
   { path: '/wallet', label: 'Wallet & Ledger', icon: 'wallet' },
   { path: '/profile', label: 'Profile & KYC', icon: 'user' },
   { path: '/admin', label: 'Admin', icon: 'shield', admin: true },
+  { path: '/admin/kyc', label: 'KYC Review', icon: 'check-circle', admin: true },
 ];
 
 function Sidebar() {

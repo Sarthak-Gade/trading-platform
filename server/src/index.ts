@@ -21,6 +21,7 @@ import {
 import { generalLimiter, orderLimiter, moneyLimiter } from './middleware/rateLimit';
 import { securityHeaders } from './middleware/security';
 import authRouter from './routes/auth';
+import { requireKyc } from './middleware/kyc';
 
 if (!process.env.JWT_SECRET) {
   console.error('JWT_SECRET is not set. Add it to server/.env before starting the server.');
@@ -235,7 +236,7 @@ app.get('/api/me/trades', requireAuth, async (req: AuthRequest, res: Response) =
   }
 });
 
-app.post('/api/orders', requireAuth, orderLimiter, async (req: AuthRequest, res: Response) => {
+app.post('/api/orders', requireAuth, orderLimiter, requireKyc, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;
 
@@ -686,14 +687,59 @@ app.patch('/api/me/account', requireAuth, async (req: AuthRequest, res: Response
     }
 
     const updated = await prisma.account.update({
-      where: { userId },
-      data: parsed.value,
+    where: { userId },
+    data: existing.kycStatus === 'rejected'
+        ? { ...parsed.value, kycStatus: 'pending', kycNote: null }
+        : parsed.value,
     });
 
     res.json(updated);
   } catch (error) {
     console.error('Error updating account details:', error);
     res.status(500).json({ error: 'Something went wrong updating account details' });
+  }
+});
+
+// ---------- KYC review (admin) ----------
+app.get('/api/admin/kyc', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const status = typeof req.query.status === 'string' ? req.query.status : 'pending';
+    if (!['pending', 'verified', 'rejected'].includes(status)) {
+      throw new HttpError(400, 'status must be pending, verified or rejected');
+    }
+    const accounts = await prisma.account.findMany({
+      where: { kycStatus: status },
+      orderBy: { user: { createdAt: 'desc' } },
+      include: { user: { select: { id: true, fullName: true, email: true, mobNumber: true } } },
+    });
+    res.json(accounts);
+  } catch (error) {
+    sendError(res, error, 'fetching KYC submissions');
+  }
+});
+
+app.post('/api/admin/kyc/:userId/review', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const rawUserId = req.params.userId;
+    if (!rawUserId || Array.isArray(rawUserId)) throw new HttpError(400, 'User ID is required');
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const decision = body.decision;
+    if (decision !== 'verified' && decision !== 'rejected') {
+      throw new HttpError(400, 'decision must be "verified" or "rejected"');
+    }
+    const note = typeof body.note === 'string' ? body.note.trim().slice(0, 300) : '';
+    if (decision === 'rejected' && !note) throw new HttpError(400, 'Give a reason when rejecting a KYC');
+
+    const result = await prisma.account.updateMany({
+      where: { userId: rawUserId },
+      data: { kycStatus: decision, kycNote: note || null, kycReviewedAt: new Date() },
+    });
+    if (result.count === 0) throw new HttpError(404, 'No KYC profile found for this user');
+
+    res.json({ message: `KYC ${decision}` });
+  } catch (error) {
+    sendError(res, error, 'reviewing the KYC');
   }
 });
 
@@ -1124,7 +1170,7 @@ app.get('/api/me/ipo-applications', requireAuth, async (req: AuthRequest, res: R
 });
 
 // Apply: blocks the bid amount from the balance, like a UPI mandate
-app.post('/api/ipos/:ipoId/apply', requireAuth, moneyLimiter, async (req: AuthRequest, res: Response) => {
+app.post('/api/ipos/:ipoId/apply', requireAuth, moneyLimiter, requireKyc, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId as string;
     const rawIpoId = req.params.ipoId;
