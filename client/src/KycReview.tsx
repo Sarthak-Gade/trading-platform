@@ -24,21 +24,19 @@ export default function KycReview() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      setRows((await apiFetch(`/api/admin/kyc?status=${tab}`, token)) as Submission[]);
-      setError('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load submissions');
-    } finally {
-      setLoading(false);
-    }
-  }, [token, tab]);
+    // Bumping reloadKey re-runs the fetch below, so a decision can refresh the list
+  const [reloadKey, setReloadKey] = useState(0);
+  const load = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    apiFetch(`/api/admin/kyc?status=${tab}`, token)
+      .then((data) => {
+        setRows(data as Submission[]);
+        setError('');
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load submissions'))
+      .finally(() => setLoading(false));
+  }, [token, tab, reloadKey]);
 
   async function review(row: Submission, decision: 'verified' | 'rejected') {
     let note = '';
@@ -69,7 +67,10 @@ export default function KycReview() {
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
         {(['pending', 'verified', 'rejected'] as Tab[]).map((t) => (
-          <button key={t} className={`btn btn-sm ${tab === t ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setTab(t)}>
+          <button key={t} className={`btn btn-sm ${tab === t ? 'btn-primary' : 'btn-ghost'}`} onClick={() => {
+              setLoading(true);
+              setTab(t);
+            }}>
             {t[0]?.toUpperCase()}
             {t.slice(1)}
           </button>

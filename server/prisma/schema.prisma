@@ -42,6 +42,7 @@ model User {
   otpCodes     OtpCode[]
   journals Journal[]
   ipoApplications IpoApplication[]
+  contractNoteEmails ContractNoteEmail[]
 }
 
 // One-time codes for email verification, mobile verification and password reset.
@@ -295,4 +296,18 @@ model IpoApplication {
   ipo  Ipo  @relation(fields: [ipoId], references: [id], onDelete: Cascade)
 
   @@unique([userId, ipoId])
+}
+
+
+// One row per user and trading day once that day's contract note has been emailed.
+// The unique pair is what stops the same note being sent twice.
+model ContractNoteEmail {
+  id     String   @id @default(uuid())
+  userId String
+  date   String   // YYYY-MM-DD, Indian time
+  sentAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
 }

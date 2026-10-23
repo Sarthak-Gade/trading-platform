@@ -122,10 +122,7 @@ function AdminCreate({ onDone }: { onDone: (msg: string) => void }) {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (picked || query.trim().length < 2) {
-      setHits([]);
-      return;
-    }
+        if (picked || query.trim().length < 2) return;
     const t = setTimeout(() => {
       apiFetch(`/api/instruments/search?q=${encodeURIComponent(query.trim())}`, token)
         .then((r) => setHits(r as InstrumentHit[]))
@@ -133,6 +130,8 @@ function AdminCreate({ onDone }: { onDone: (msg: string) => void }) {
     }, 250);
     return () => clearTimeout(t);
   }, [query, picked, token]);
+    // Results for an old search are hidden once the box is cleared or a company is picked
+  const shownHits = picked || query.trim().length < 2 ? [] : hits;
 
   function set(key: keyof typeof form, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -188,9 +187,9 @@ function AdminCreate({ onDone }: { onDone: (msg: string) => void }) {
         ) : (
           <>
             <input placeholder="Search a symbol or name" value={query} onChange={(e) => setQuery(e.target.value)} />
-            {hits.length > 0 && (
+            {shownHits.length > 0 && (
               <ul className="ipo-hits">
-                {hits.map((h) => (
+                {shownHits.map((h) => (
                   <li key={h.id}>
                     <button type="button" onClick={() => setPicked(h)}>
                       <b>{h.symbol}</b> <span>{h.name}</span>
@@ -238,20 +237,18 @@ export default function Ipo() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    try {
-      setIpos((await apiFetch('/api/ipos', token)) as IpoItem[]);
-    } catch (err) {
-      setError(errorMessage(err, 'Could not load IPOs'));
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
+  // Bumping reloadKey re-runs the fetch below, so a bid, cancel or allotment can refresh the list
+  const [reloadKey, setReloadKey] = useState(0);
+  const load = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    apiFetch('/api/ipos', token)
+      .then((data) => setIpos(data as IpoItem[]))
+      .catch((err) => setError(errorMessage(err, 'Could not load IPOs')))
+      .finally(() => setLoading(false));
+  }, [token, reloadKey]);
+
+
 
   function done(msg: string) {
     setError('');

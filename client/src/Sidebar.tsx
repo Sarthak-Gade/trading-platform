@@ -10,6 +10,7 @@ const items: { path: string; label: string; icon: IconName; admin?: boolean }[] 
   { path: '/journal', label: 'Trading Journal', icon: 'book' },
   { path: '/ipo', label: 'IPOs', icon: 'zap' },
   { path: '/wallet', label: 'Wallet & Ledger', icon: 'wallet' },
+  { path: '/contract-notes', label: 'Contract Notes', icon: 'file-text' },
   { path: '/profile', label: 'Profile & KYC', icon: 'user' },
   { path: '/admin', label: 'Admin', icon: 'shield', admin: true },
   { path: '/admin/kyc', label: 'KYC Review', icon: 'check-circle', admin: true },

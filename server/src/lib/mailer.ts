@@ -38,20 +38,35 @@ function logToFile(entry: string) {
   }
 }
 
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType: string;
+}
+
 // Throws if the email could not be sent, so the caller can tell the user
-export async function sendEmail(to: string, subject: string, text: string): Promise<void> {
+export async function sendEmail(
+  to: string,
+  subject: string,
+  text: string,
+  attachments: EmailAttachment[] = []
+): Promise<void> {
   if (emailIsReal()) {
     await getTransport().sendMail({
       from: process.env.MAIL_FROM || `TradeSim <${process.env.SMTP_USER}>`,
       to,
       subject,
       text,
+      attachments,
     });
     return;
   }
 
-  console.log(`\n📧 Email to ${to}\n   ${subject}\n   ${text.replace(/\n/g, '\n   ')}\n`);
-  logToFile(`[${new Date().toISOString()}] To: ${to}\nSubject: ${subject}\n${text}\n${'-'.repeat(60)}\n`);
+  const attached = attachments.length
+    ? `\n   Attachments: ${attachments.map((a) => `${a.filename} (${a.content.length} bytes)`).join(', ')}`
+    : '';
+  console.log(`\n📧 Email to ${to}\n   ${subject}\n   ${text.replace(/\n/g, '\n   ')}${attached}\n`);
+  logToFile(`[${new Date().toISOString()}] To: ${to}\nSubject: ${subject}${attached}\n${text}\n${'-'.repeat(60)}\n`);
 }
 
 export async function sendOtpEmail(

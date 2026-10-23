@@ -41,22 +41,18 @@ export default function Journal() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const [journal, tradeList] = await Promise.all([
-        apiFetch('/api/me/journal', token),
-        apiFetch('/api/me/trades', token),
-      ]);
-      setEntries(journal as JournalEntry[]);
-      setTrades(tradeList as TradeOption[]);
-    } catch (err) {
-      setError(errorMessage(err, 'Could not load the journal'));
-    }
-  }, [token]);
+   // Bumping reloadKey re-runs the fetch below, so every save or delete can refresh the list
+  const [reloadKey, setReloadKey] = useState(0);
+  const load = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    Promise.all([apiFetch('/api/me/journal', token), apiFetch('/api/me/trades', token)])
+      .then(([journal, tradeList]) => {
+        setEntries(journal as JournalEntry[]);
+        setTrades(tradeList as TradeOption[]);
+      })
+      .catch((err) => setError(errorMessage(err, 'Could not load the journal')));
+  }, [token, reloadKey]);
 
   function set<K extends keyof typeof emptyForm>(key: K, value: string) {
     setForm((f) => ({ ...f, [key]: value }));

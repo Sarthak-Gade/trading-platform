@@ -20,6 +20,7 @@ import './index.css';
 import Journal from './Journal';
 import Ipo from './Ipo';
 import KycReview from './KycReview';
+import ContractNotes from './ContractNotes';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -39,6 +40,7 @@ createRoot(document.getElementById('root')!).render(
                 <Route path="/portfolio" element={<Portfolio />} />
                 <Route path="/wallet" element={<WalletPage />} />
                 <Route path="/journal" element={<Journal />} />
+                <Route path="/contract-notes" element={<ContractNotes />} />
                 <Route path="/ipo" element={<Ipo />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route element={<AdminRoute />}>

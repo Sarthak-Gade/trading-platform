@@ -22,6 +22,8 @@ import { generalLimiter, orderLimiter, moneyLimiter } from './middleware/rateLim
 import { securityHeaders } from './middleware/security';
 import authRouter from './routes/auth';
 import { requireKyc } from './middleware/kyc';
+import { buildContractNote, contractNoteNumber } from './lib/contractNote';
+import {istDateString,istDayRange,loadContractNoteData,sendContractNotesForDate,startContractNoteMailer} from './lib/contractNoteService';
 
 if (!process.env.JWT_SECRET) {
   console.error('JWT_SECRET is not set. Add it to server/.env before starting the server.');
@@ -1380,6 +1382,89 @@ app.post('/api/admin/ipos/:ipoId/allot', requireAuth, requireAdmin, async (req: 
     res.json(summary);
   } catch (error) {
     sendError(res, error, 'running the IPO allotment');
+  }
+});
+
+// ---------- Daily contract notes ----------
+// The days (last 12 months) on which the user traded, with a small summary for each
+app.get('/api/me/contract-notes', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const since = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+
+    const trades = await prisma.trade.findMany({
+      where: { userId, executedAt: { gte: since } },
+      select: {
+        executedAt: true,
+        totalPrice: true,
+        brokerage: true,
+        stt: true,
+        exchangeCharges: true,
+        sebiCharges: true,
+        gst: true,
+        stampDuty: true,
+        order: { select: { type: true } },
+      },
+      orderBy: { executedAt: 'desc' },
+    });
+
+    const days = new Map<string, { date: string; trades: number; buyValue: number; sellValue: number; charges: number }>();
+    for (const t of trades) {
+      const date = istDateString(t.executedAt);
+      const day = days.get(date) ?? { date, trades: 0, buyValue: 0, sellValue: 0, charges: 0 };
+      const value = Number(t.totalPrice);
+      day.trades += 1;
+      if (t.order.type === 'sell') day.sellValue += value;
+      else day.buyValue += value;
+      day.charges += Number(t.brokerage) + Number(t.stt) + Number(t.exchangeCharges) + Number(t.sebiCharges) + Number(t.gst) + Number(t.stampDuty);
+      days.set(date, day);
+    }
+
+    res.json(
+      [...days.values()].map((d) => ({
+        ...d,
+        buyValue: roundMoney(d.buyValue),
+        sellValue: roundMoney(d.sellValue),
+        charges: roundMoney(d.charges),
+      }))
+    );
+  } catch (error) {
+    sendError(res, error, 'fetching contract notes');
+  }
+});
+
+// One day's contract note as a PDF
+app.get('/api/me/contract-notes/:date/pdf', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId as string;
+    const rawDate = req.params.date;
+    if (!rawDate || Array.isArray(rawDate)) throw new HttpError(400, 'Date is required');
+    if (!istDayRange(rawDate)) throw new HttpError(400, 'Date must be a real day in YYYY-MM-DD format');
+
+    const data = await loadContractNoteData(userId, rawDate);
+    if (!data) throw new HttpError(404, 'You have no trades on this date');
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${contractNoteNumber(data.client.clientCode, rawDate)}.pdf"`);
+    const doc = buildContractNote(data);
+    doc.pipe(res);
+    doc.end();
+  } catch (error) {
+    sendError(res, error, 'creating the contract note');
+  }
+});
+
+// Admin: email the contract notes for a day right now (defaults to today). resend: true sends again
+// even to users who already got it, which is handy for testing.
+app.post('/api/admin/contract-notes/send', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const date = typeof body.date === 'string' && body.date ? body.date : istDateString(new Date());
+    if (!istDayRange(date)) throw new HttpError(400, 'date must be a real day in YYYY-MM-DD format');
+
+    res.json(await sendContractNotesForDate(date, { resend: body.resend === true }));
+  } catch (error) {
+    sendError(res, error, 'sending contract notes');
   }
 });
 
