@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from './context/AuthContext';
 import { apiFetch } from './api';
 import Icon from './Icon';
+import KycDocuments from './KycDocuments';
 
 interface Account {
   dob: string;
@@ -24,6 +25,8 @@ function Profile() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  // Bumping reloadKey re-reads the account, e.g. after a document upload moves a rejected KYC back to pending
+  const [reloadKey, setReloadKey] = useState(0);
 
   const [dob, setDob] = useState('');
   const [panNo, setPanNo] = useState('');
@@ -45,7 +48,7 @@ function Profile() {
         else setError(err instanceof Error ? err.message : 'Could not load your profile');
         setLoaded(true);
       });
-  }, [token]);
+  }, [token, reloadKey]);
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,112 +81,117 @@ function Profile() {
   }
 
   return (
-    <form className="card stack" onSubmit={save}>
-      <div className="card-head" style={{ marginBottom: 0 }}>
-        <span className="card-title">{notFound ? 'Complete your KYC' : 'KYC profile'}</span>
+    <div className="stack">
+      <form className="card stack" onSubmit={save}>
+        <div className="card-head" style={{ marginBottom: 0 }}>
+          <span className="card-title">{notFound ? 'Complete your KYC' : 'KYC profile'}</span>
+          {account && (
+            <span
+              className={`badge ${
+                account.kycStatus === 'verified' ? 'badge-green' : account.kycStatus === 'rejected' ? 'badge-red' : 'badge-amber'
+              }`}
+            >
+              KYC {account.kycStatus} · {account.uniqueClientCode}
+            </span>
+          )}
+        </div>
+
+        {notFound && (
+          <div className="notice notice-warn">
+            <Icon name="alert-circle" size={16} /> You cannot trade until your KYC is submitted and verified.
+          </div>
+        )}
+        {account?.kycStatus === 'pending' && (
+          <div className="notice notice-info">
+            <Icon name="clock" size={16} /> Your KYC is waiting for verification. Trading unlocks once it is approved.
+          </div>
+        )}
+        {account?.kycStatus === 'rejected' && (
+          <div className="notice notice-error">
+            <Icon name="alert-circle" size={16} /> KYC rejected{account.kycNote ? `: ${account.kycNote}` : ''}. Update your
+            details below and save to resubmit.
+          </div>
+        )}
+
         {account && (
-          <span
-            className={`badge ${
-              account.kycStatus === 'verified' ? 'badge-green' : account.kycStatus === 'rejected' ? 'badge-red' : 'badge-amber'
-            }`}
-          >
-            KYC {account.kycStatus} · {account.uniqueClientCode}
-          </span>
+          <div className="profile-facts">
+            <div className="fact"><small>PAN (locked)</small><span>{account.pan_no}</span></div>
+            <div className="fact"><small>Date of birth (locked)</small><span>{new Date(account.dob).toLocaleDateString('en-IN')}</span></div>
+            <div className="fact"><small>Gender</small><span>{account.gender}</span></div>
+            <div className="fact"><small>Marital status</small><span>{account.maritalStatus}</span></div>
+          </div>
         )}
-        {notFound && (
-        <div className="notice notice-warn">
-          <Icon name="alert-circle" size={16} /> You cannot trade until your KYC is submitted and verified.
-        </div>
-      )}
-      {account?.kycStatus === 'pending' && (
-        <div className="notice notice-info">
-          <Icon name="clock" size={16} /> Your KYC is waiting for verification. Trading unlocks once it is approved.
-        </div>
-      )}
-      {account?.kycStatus === 'rejected' && (
-        <div className="notice notice-error">
-          <Icon name="alert-circle" size={16} /> KYC rejected{account.kycNote ? `: ${account.kycNote}` : ''}. Update your
-          details below and save to resubmit.
-        </div>
-      )}
-      </div>
 
-      {account && (
-        <div className="profile-facts">
-          <div className="fact"><small>PAN (locked)</small><span>{account.pan_no}</span></div>
-          <div className="fact"><small>Date of birth (locked)</small><span>{new Date(account.dob).toLocaleDateString('en-IN')}</span></div>
-          <div className="fact"><small>Gender</small><span>{account.gender}</span></div>
-          <div className="fact"><small>Marital status</small><span>{account.maritalStatus}</span></div>
+        <div className="form-grid">
+          {notFound && (
+            <>
+              <div className="field">
+                <label className="label" htmlFor="dob">Date of birth</label>
+                <input id="dob" className="input" type="date" value={dob} onChange={(e) => setDob(e.target.value)} required />
+              </div>
+              <div className="field">
+                <label className="label" htmlFor="pan">PAN number</label>
+                <input
+                  id="pan"
+                  className="input"
+                  placeholder="ABCDE1234F"
+                  maxLength={10}
+                  value={panNo}
+                  onChange={(e) => setPanNo(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="field">
+                <label className="label" htmlFor="gender">Gender</label>
+                <select id="gender" className="input" value={gender} onChange={(e) => setGender(e.target.value)}>
+                  <option>Male</option>
+                  <option>Female</option>
+                  <option>Other</option>
+                </select>
+              </div>
+              <div className="field">
+                <label className="label" htmlFor="marital">Marital status</label>
+                <select id="marital" className="input" value={maritalStatus} onChange={(e) => setMaritalStatus(e.target.value)}>
+                  <option>Single</option>
+                  <option>Married</option>
+                </select>
+              </div>
+            </>
+          )}
+          <div className="field">
+            <label className="label" htmlFor="occupation">Occupation</label>
+            <input id="occupation" className="input" value={occupation} onChange={(e) => setOccupation(e.target.value)} required />
+          </div>
+          <div className="field">
+            <label className="label" htmlFor="income">Income range</label>
+            <select id="income" className="input" value={incomeRange} onChange={(e) => setIncomeRange(e.target.value)}>
+              {INCOME.map((i) => (
+                <option key={i} value={i}>{i}</option>
+              ))}
+            </select>
+          </div>
         </div>
-      )}
 
-      <div className="form-grid">
-        {notFound && (
-          <>
-            <div className="field">
-              <label className="label" htmlFor="dob">Date of birth</label>
-              <input id="dob" className="input" type="date" value={dob} onChange={(e) => setDob(e.target.value)} required />
-            </div>
-            <div className="field">
-              <label className="label" htmlFor="pan">PAN number</label>
-              <input
-                id="pan"
-                className="input"
-                placeholder="ABCDE1234F"
-                maxLength={10}
-                value={panNo}
-                onChange={(e) => setPanNo(e.target.value)}
-                required
-              />
-            </div>
-            <div className="field">
-              <label className="label" htmlFor="gender">Gender</label>
-              <select id="gender" className="input" value={gender} onChange={(e) => setGender(e.target.value)}>
-                <option>Male</option>
-                <option>Female</option>
-                <option>Other</option>
-              </select>
-            </div>
-            <div className="field">
-              <label className="label" htmlFor="marital">Marital status</label>
-              <select id="marital" className="input" value={maritalStatus} onChange={(e) => setMaritalStatus(e.target.value)}>
-                <option>Single</option>
-                <option>Married</option>
-              </select>
-            </div>
-          </>
+        {error && (
+          <div className="notice notice-error" role="alert">
+            <Icon name="alert-circle" size={16} /> {error}
+          </div>
         )}
-        <div className="field">
-          <label className="label" htmlFor="occupation">Occupation</label>
-          <input id="occupation" className="input" value={occupation} onChange={(e) => setOccupation(e.target.value)} required />
-        </div>
-        <div className="field">
-          <label className="label" htmlFor="income">Income range</label>
-          <select id="income" className="input" value={incomeRange} onChange={(e) => setIncomeRange(e.target.value)}>
-            {INCOME.map((i) => (
-              <option key={i} value={i}>{i}</option>
-            ))}
-          </select>
-        </div>
-      </div>
+        {message && (
+          <div className="notice notice-success" role="status">
+            <Icon name="check-circle" size={16} /> {message}
+          </div>
+        )}
 
-      {error && (
-        <div className="notice notice-error" role="alert">
-          <Icon name="alert-circle" size={16} /> {error}
+        <div>
+          <button type="submit" className="btn btn-primary">
+            {notFound ? 'Save KYC profile' : 'Update profile'}
+          </button>
         </div>
-      )}
-      {message && (
-        <div className="notice notice-success" role="status">
-          <Icon name="check-circle" size={16} /> {message}
-        </div>
-      )}
+      </form>
 
-      <div>
-        <button type="submit" className="btn btn-primary">
-          {notFound ? 'Save KYC profile' : 'Update profile'}
-        </button>
-      </div>
-    </form>
+      {account && <KycDocuments kycStatus={account.kycStatus} onChanged={() => setReloadKey((k) => k + 1)} />}
+    </div>
   );
 }
 

@@ -43,6 +43,7 @@ model User {
   journals Journal[]
   ipoApplications IpoApplication[]
   contractNoteEmails ContractNoteEmail[]
+  kycDocuments KycDocument[]
 }
 
 // One-time codes for email verification, mobile verification and password reset.
@@ -310,4 +311,21 @@ model ContractNoteEmail {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, date])
+}
+
+// An uploaded KYC document (PAN card, address proof, photo). The file itself is stored in the
+// database, so it is never served from a public folder and is never lost on a deploy.
+model KycDocument {
+  id         String   @id @default(uuid())
+  userId     String
+  type       String   // pan_card | address_proof | photo
+  fileName   String
+  mimeType   String   // image/jpeg | image/png | application/pdf
+  size       Int
+  data       Bytes
+  uploadedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
 }

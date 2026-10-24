@@ -22,6 +22,8 @@ import { generalLimiter, orderLimiter, moneyLimiter } from './middleware/rateLim
 import { securityHeaders } from './middleware/security';
 import authRouter from './routes/auth';
 import { requireKyc } from './middleware/kyc';
+import kycDocumentsRouter from './routes/kycDocuments';
+import { KYC_DOC_LABELS, missingRequiredDocs } from './lib/kycDocuments';
 import { buildContractNote, contractNoteNumber } from './lib/contractNote';
 import {istDateString,istDayRange,loadContractNoteData,sendContractNotesForDate,startContractNoteMailer} from './lib/contractNoteService';
 
@@ -102,6 +104,7 @@ app.get('/api/admin/stats', requireAuth, requireAdmin, async (req: AuthRequest, 
 });
 
 app.use('/api/auth', authRouter);
+app.use('/api', kycDocumentsRouter);
 
 app.get('/api/me/holdings', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
@@ -732,6 +735,14 @@ app.post('/api/admin/kyc/:userId/review', requireAuth, requireAdmin, async (req:
     }
     const note = typeof body.note === 'string' ? body.note.trim().slice(0, 300) : '';
     if (decision === 'rejected' && !note) throw new HttpError(400, 'Give a reason when rejecting a KYC');
+
+    // A KYC can only be approved once the required documents have been uploaded
+    if (decision === 'verified') {
+      const missing = await missingRequiredDocs(rawUserId);
+      if (missing.length > 0) {
+        throw new HttpError(400, `Cannot approve yet: ${missing.map((t) => KYC_DOC_LABELS[t]).join(' and ')} not uploaded`);
+      }
+    }
 
     const result = await prisma.account.updateMany({
       where: { userId: rawUserId },
@@ -1488,6 +1499,7 @@ const io = new Server(httpServer, {
 connectToFinnhub(io);
 startYahooFinancePolling(io, ['RELIANCE.NS']);
 startOrderEngine();
+startContractNoteMailer();
 
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
