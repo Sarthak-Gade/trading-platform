@@ -26,6 +26,9 @@ import kycDocumentsRouter from './routes/kycDocuments';
 import { KYC_DOC_LABELS, missingRequiredDocs } from './lib/kycDocuments';
 import { buildContractNote, contractNoteNumber } from './lib/contractNote';
 import {istDateString,istDayRange,loadContractNoteData,sendContractNotesForDate,startContractNoteMailer} from './lib/contractNoteService';
+import { getIndexQuotes, getIndexConstituents } from './lib/indices';
+import { getCandles, isTimeframe, TIMEFRAMES } from './lib/candles';
+import { getIndexQuotes, getIndexConstituents, findIndexDef } from './lib/indices';
 
 if (!process.env.JWT_SECRET) {
   console.error('JWT_SECRET is not set. Add it to server/.env before starting the server.');
@@ -886,6 +889,76 @@ app.get('/api/instruments/:instrumentId/quote', requireAuth, async (req: AuthReq
     res.json(quote);
   } catch (error) {
     sendError(res, error, 'fetching the quote');
+  }
+});
+
+app.get('/api/market/indices', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await getIndexQuotes();
+    res.json({ indices: result.value, stale: result.stale });
+  } catch (error) {
+    sendError(res, error, 'fetching index quotes');
+  }
+});
+
+app.get('/api/market/indices/:indexKey/constituents', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const rawKey = req.params.indexKey;
+    if (!rawKey || Array.isArray(rawKey)) {
+      return res.status(400).json({ error: 'Index key is required' });
+    }
+    res.json(await getIndexConstituents(rawKey));
+  } catch (error) {
+    sendError(res, error, 'fetching index constituents');
+  }
+});
+
+app.get('/api/instruments/:instrumentId/candles', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const rawId = req.params.instrumentId;
+    if (!rawId || Array.isArray(rawId)) {
+      return res.status(400).json({ error: 'Instrument ID is required' });
+    }
+
+    const timeframe = req.query.timeframe ?? '5m';
+    if (!isTimeframe(timeframe)) {
+      return res.status(400).json({ error: `timeframe must be one of: ${Object.keys(TIMEFRAMES).join(', ')}` });
+    }
+
+    const instrument = await prisma.instrument.findUnique({ where: { id: rawId } });
+    if (!instrument) {
+      return res.status(404).json({ error: 'Instrument not found' });
+    }
+
+    const yahooSymbol = `${instrument.symbol}${instrument.exchange === 'BSE' ? '.BO' : '.NS'}`;
+    const result = await getCandles(yahooSymbol, timeframe);
+    res.json({ symbol: instrument.symbol, timeframe, candles: result.value, stale: result.stale });
+  } catch (error) {
+    sendError(res, error, 'fetching candles');
+  }
+});
+
+app.get('/api/market/indices/:indexKey/candles', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const rawKey = req.params.indexKey;
+    if (!rawKey || Array.isArray(rawKey)) {
+      return res.status(400).json({ error: 'Index key is required' });
+    }
+
+    const def = findIndexDef(rawKey);
+    if (!def) {
+      return res.status(404).json({ error: 'Unknown index' });
+    }
+
+    const timeframe = req.query.timeframe ?? '5m';
+    if (!isTimeframe(timeframe)) {
+      return res.status(400).json({ error: `timeframe must be one of: ${Object.keys(TIMEFRAMES).join(', ')}` });
+    }
+
+    const result = await getCandles(def.yahoo, timeframe);
+    res.json({ key: def.key, name: def.name, timeframe, candles: result.value, stale: result.stale });
+  } catch (error) {
+    sendError(res, error, 'fetching index candles');
   }
 });
 
