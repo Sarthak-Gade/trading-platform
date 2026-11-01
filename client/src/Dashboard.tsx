@@ -7,7 +7,7 @@ import { inr, signedInr, signedPct, tone } from './format';
 import { useLiveQuote } from './hooks';
 import type { Instrument } from './types';
 import InstrumentSearch from './InstrumentSearch';
-import PriceChart from './PriceChart';
+import StockChart from './StockChart';
 import OrderForm from './OrderForm';
 import OrderBook from './OrderBook';
 import TradeBook from './TradeBook';
@@ -213,8 +213,7 @@ function Dashboard() {
               </div>
             )}
 
-            <PriceChart instrumentId={selected.id} quote={quote} />
-          </div>
+            <StockChart instrumentId={selected.id} quote={quote} />          </div>
 
           <OrderForm
             key={selected.id}
