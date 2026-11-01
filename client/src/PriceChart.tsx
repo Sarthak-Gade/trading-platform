@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 import { AreaSeries, ColorType, createChart, LineStyle } from 'lightweight-charts';
 import type { IChartApi, IPriceLine, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import type { Quote } from './types';
+import { useFullscreen } from './useFullscreen';
+import FullscreenButton from './FullscreenButton';
 
 interface Props {
   instrumentId: string;
@@ -14,6 +16,7 @@ const DOWN = '#ef4444';
 // Builds a live chart from the quotes the dashboard already polls, so chart, header and ticket
 // always show the same price.
 function PriceChart({ instrumentId, quote }: Props) {
+  const { ref: wrapRef, isFullscreen, toggle: toggleFullscreen } = useFullscreen<HTMLDivElement>();
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Area'> | null>(null);
@@ -103,9 +106,14 @@ function PriceChart({ instrumentId, quote }: Props) {
   }, [quote]);
 
   return (
-    <div className="chart-box">
-      <div className="chart-surface" ref={containerRef} />
-      {!quote && <div className="chart-overlay">Waiting for the live price…</div>}
+        <div className="chart-wrap" ref={wrapRef}>
+      <div className="chart-box">
+        <div className="chart-surface" ref={containerRef} />
+        <div className="chart-fs-corner">
+          <FullscreenButton isFullscreen={isFullscreen} onToggle={toggleFullscreen} />
+        </div>
+        {!quote && <div className="chart-overlay">Waiting for the live price…</div>}
+      </div>
     </div>
   );
 }

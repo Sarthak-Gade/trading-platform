@@ -149,7 +149,7 @@ function Terminal() {
   const { refresh: refreshBalance } = useBalance();
   const { selected, select } = useSelectedInstrument();
   const [tab, setTab] = useState<TabId>('orders');
-  const [chartMode, setChartMode] = useState<'live' | 'candles'>('live');
+  const [chartMode, setChartMode] = useState<'live' | 'candles'>('candles');
   const [refreshKey, setRefreshKey] = useState(0);
   const { quote, error: quoteError } = useLiveQuote(selected?.id ?? null);
 

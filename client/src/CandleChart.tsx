@@ -6,6 +6,8 @@ import { apiFetch } from './api';
 import { inr } from './format';
 import { detectPatterns } from './patterns';
 import type { Candle } from './patterns';
+import { useFullscreen } from './useFullscreen';
+import FullscreenButton from './FullscreenButton';
 
 const TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '1D', '1W'] as const;
 type Timeframe = (typeof TIMEFRAMES)[number];
@@ -51,7 +53,7 @@ function CandleChart({ kind, id }: Props) {
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<{ key: string; message: string } | null>(null);
   const [legend, setLegend] = useState<Legend | null>(null);
-
+  const { ref: wrapRef, isFullscreen, toggle: toggleFullscreen } = useFullscreen<HTMLDivElement>();
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -216,7 +218,7 @@ function CandleChart({ kind, id }: Props) {
   const shown = legend ?? (candles && candles.length > 0 ? candles[candles.length - 1] : null);
 
   return (
-    <div>
+    <div className="chart-wrap" ref={wrapRef}>
       <div className="chart-toolbar">
         <div className="pill-tabs">
           {TIMEFRAMES.map((tf) => (
@@ -230,10 +232,13 @@ function CandleChart({ kind, id }: Props) {
             </button>
           ))}
         </div>
-        <label className="chart-toggle">
-          <input type="checkbox" checked={showPatterns} onChange={(e) => setShowPatterns(e.target.checked)} />
-          Show patterns
-        </label>
+               <div className="chart-tools">
+          <label className="chart-toggle">
+            <input type="checkbox" checked={showPatterns} onChange={(e) => setShowPatterns(e.target.checked)} />
+            Show patterns
+          </label>
+          <FullscreenButton isFullscreen={isFullscreen} onToggle={toggleFullscreen} />
+        </div>
       </div>
 
       {shown && (

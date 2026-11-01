@@ -2322,3 +2322,45 @@ select.input option {
   font-size: 11px;
   margin: 0;
 }
+
+/* ---- Chart full screen ---- */
+.chart-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.chart-fs-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.chart-fs-btn:hover {
+  color: #fff;
+  border-color: #374151;
+}
+.chart-fs-corner {
+  position: absolute;
+  top: 8px;
+  right: 56px;
+  z-index: 3;
+}
+.chart-wrap:fullscreen {
+  background: var(--bg);
+  padding: 20px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.chart-wrap:fullscreen .chart-box,
+.chart-wrap:fullscreen .chart-box.chart-box-tall {
+  flex: 1;
+  height: auto;
+  min-height: 320px;
+}
