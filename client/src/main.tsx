@@ -12,6 +12,7 @@ import Verify from './Verify';
 import ForgotPassword from './ForgotPassword';
 import Dashboard from './Dashboard';
 import Terminal from './Terminal';
+import Indices from './Indices';  
 import Portfolio from './Portfolio';
 import WalletPage from './WalletPage';
 import ProfilePage from './ProfilePage';
@@ -37,6 +38,7 @@ createRoot(document.getElementById('root')!).render(
               <Route element={<Layout />}>
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/terminal" element={<Terminal />} />
+                <Route path="/indices" element={<Indices />} />
                 <Route path="/portfolio" element={<Portfolio />} />
                 <Route path="/wallet" element={<WalletPage />} />
                 <Route path="/journal" element={<Journal />} />

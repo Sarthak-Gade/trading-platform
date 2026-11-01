@@ -13,6 +13,7 @@ import TradeBook from './TradeBook';
 import Watchlist from './Watchlist';
 import Alerts from './Alerts';
 import Icon, { type IconName } from './Icon';
+import CandleChart from './CandleChart';
 
 type TabId = 'orders' | 'trades' | 'alerts';
 const TABS: { id: TabId; label: string; icon: IconName }[] = [
@@ -148,6 +149,7 @@ function Terminal() {
   const { refresh: refreshBalance } = useBalance();
   const { selected, select } = useSelectedInstrument();
   const [tab, setTab] = useState<TabId>('orders');
+  const [chartMode, setChartMode] = useState<'live' | 'candles'>('live');
   const [refreshKey, setRefreshKey] = useState(0);
   const { quote, error: quoteError } = useLiveQuote(selected?.id ?? null);
 
@@ -217,8 +219,19 @@ function Terminal() {
                 </div>
               )}
 
-              <PriceChart instrumentId={selected.id} quote={quote} />
-            </div>
+              <div className="pill-tabs" style={{ marginBottom: 10 }}>
+                <button type="button" className={`pill-tab${chartMode === 'live' ? ' active' : ''}`} onClick={() => setChartMode('live')}>
+                  Live price
+                </button>
+                <button type="button" className={`pill-tab${chartMode === 'candles' ? ' active' : ''}`} onClick={() => setChartMode('candles')}>
+                  Candles &amp; patterns
+                </button>
+              </div>
+              {chartMode === 'live' ? (
+                <PriceChart instrumentId={selected.id} quote={quote} />
+              ) : (
+                <CandleChart key={selected.id} kind="instrument" id={selected.id} />
+              )}            </div>
 
             <div className="card card-flush">
               <div className="tabs" role="tablist">
